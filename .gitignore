@@ -1,0 +1,25 @@
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Python / uv
+__pycache__/
+*.py[cod]
+.venv/
+.cache/
+*.duckdb
+*.duckdb.wal
+
+# Node / Frontend
+node_modules/
+dist/
+.vite/
+
+# Environment & Logs
+.env
+*.log
+*repomix*
+project_structure.txt
+create_structure_project.py
+bun.lock
