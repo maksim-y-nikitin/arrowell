@@ -8,10 +8,12 @@ dependencies = [
     "duckdb>=1.5.5",
     "duckdb-engine>=0.17.0",
     "fastapi>=0.141.1",
-    "mwdstdcore>=0.7.4",
+    "numba>=0.67.0",
     "polars>=1.44.2",
     "pydantic-settings>=2.15.0",
+    "pygeomag>=1.1.0",
     "pytz>=2026.3.post1",
+    "scipy>=1.17.1",
     "sqlalchemy>=2.0.54",
     "uvicorn>=0.53.0",
 ]

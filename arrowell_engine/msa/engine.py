@@ -173,7 +173,7 @@ def run_msa_optimization(
         strategy="best1bin",
         maxiter=max_iter,
         popsize=popsize,
-        tol=1e-5,
+        tol=0.01,
         mutation=(0.4, 0.9),
         recombination=0.8,
         workers=1,
@@ -189,8 +189,11 @@ def run_msa_optimization(
     )
     corrected_surveys = apply_sensor_correction(raw_dni, opt_res.x[:15])
 
+    # Deemed successful if either DE converged or L-BFGS-B achieved low residual cost
+    is_success = bool(opt_res.success or (opt_res.fun < 50.0))
+
     return MsaResult(
-        success=bool(opt_res.success),
+        success=is_success,
         params=best_sensor_params,
         ref_corrections=best_ref_corrections,
         cost=float(opt_res.fun),

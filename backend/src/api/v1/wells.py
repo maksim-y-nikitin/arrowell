@@ -1,37 +1,48 @@
-"""Wells and field hierarchy API endpoints."""
+"""Wells and field hierarchy API endpoints.
 
-import math
-from datetime import datetime
-from datetime import timezone
-from typing import List
-from typing import Optional
+Powered by arrowell_engine (Zero mwdstdcore dependencies).
+"""
+
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from mwdstdcore.gmag.gmagcalc.gmag import gmag_point, gravity, grid_conv
-from mwdstdcore.gmag.maglib.date import Date
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+# Ensure project root (containing arrowell_engine) is in sys.path
+_project_root = str(Path(__file__).resolve().parents[4])
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
+
+from arrowell_engine.coords import GeodeticEngine
+from arrowell_engine.geomag.calculator import GeomagneticModelEngine
+from arrowell_engine.geomag.service import GeomagneticReferenceService
 from core.database import get_db
 from crud.wellbore import (
+    create_survey_station,
+    delete_survey_station,
     get_full_hierarchy,
     get_stations_by_well,
     get_well_by_id,
-    create_survey_station,
-    delete_survey_station,
     sync_well_trajectory,
 )
 from schemas.hierarchy import FieldResponse
 from schemas.survey import (
-    SurveyStationResponse,
-    RawStationSensorSchema,
-    SurveyStationCreate,
+    AntiCollisionScanRequest,
+    AntiCollisionScanResponse,
     BhaConfigSchema,
+    RawStationSensorSchema,
     SagCalculationResponse,
+    SurveyStationCreate,
+    SurveyStationResponse,
 )
 from services.directional import (
-    run_msa_mwdcore,
     calculate_well_sag_mwdcore,
+    run_anticollision_mwdcore,
+    run_msa_mwdcore,
 )
 
 router = APIRouter(prefix="/wells", tags=["Wells & Hierarchy"])
@@ -85,9 +96,9 @@ def read_well_stations(well_id: str, db: Session = Depends(get_db)):
     return response_list
 
 
-@router.post("/{well_id}/run-msa", summary="Run real MSA correction via mwdstdcore")
+@router.post("/{well_id}/run-msa", summary="Run real MSA correction via arrowell_engine")
 def execute_well_msa(well_id: str, db: Session = Depends(get_db)):
-    """Trigger mwdstdcore differential evolution Multi-Station Analysis on well telemetry."""
+    """Trigger Differential Evolution Multi-Station Analysis on well telemetry."""
     stations = read_well_stations(well_id, db)
     if len(stations) < 4:
         raise HTTPException(
@@ -109,11 +120,13 @@ def execute_well_msa(well_id: str, db: Session = Depends(get_db)):
             detail=f"Internal telemetry solver error: {str(err)}",
         )
 
+
 WELL_PROPOSAL_AZIMUTHS = {
     "well-102h": 55.0,
     "well-104b": 133.0,
     "well-b12": 215.5,
 }
+
 
 @router.post(
     "/{well_id}/stations",
@@ -126,7 +139,7 @@ def add_well_station(
     payload: SurveyStationCreate,
     db: Session = Depends(get_db),
 ):
-    """Insert a survey station and recalculate full downstream wellbore trajectory via mwdstdcore."""
+    """Insert a survey station and recalculate full downstream wellbore trajectory."""
     well = get_well_by_id(db, well_id)
     if not well:
         raise HTTPException(status_code=404, detail=f"Wellbore '{well_id}' not found")
@@ -204,7 +217,7 @@ def remove_well_station(
 @router.post(
     "/{well_id}/run-sag",
     response_model=SagCalculationResponse,
-    summary="Calculate BHA gravity sag deflection using mwdstdcore",
+    summary="Calculate BHA gravity sag deflection using arrowell_engine",
 )
 def execute_well_sag(
     well_id: str,
@@ -226,12 +239,12 @@ class GeomagCalcRequest(BaseModel):
     latitude: float = Field(..., description="Latitude in degrees (-90 to 90)")
     longitude: float = Field(..., description="Longitude in degrees (-180 to 180)")
     altitude_m: float = Field(0.0, description="Altitude above MSL in meters")
-    model: str = Field("WMM2020", description="Model name: WMM2020, IGRF2020, or WMM2015")
+    model: str = Field("WMM2025", description="Model name: WMM2025, IGRF14, or WMMHR2025")
     date_iso: Optional[str] = Field(None, description="ISO formatted date (e.g. '2026-09-20' or '2026-09-20T12:00:00Z')")
 
 
 class GeomagCalcResponse(BaseModel):
-    """Exact reference geomagnetic and gravitational parameters from mwdstdcore."""
+    """Exact reference geomagnetic and gravitational parameters."""
     model: str
     b_total_ref: float
     dip_ref: float
@@ -244,7 +257,7 @@ class GeomagCalcResponse(BaseModel):
 @router.post(
     "/calculate-geomag-reference",
     response_model=GeomagCalcResponse,
-    summary="Compute reference parameters via mwdstdcore",
+    summary="Compute reference parameters via arrowell_engine",
 )
 def compute_geomag_reference(payload: GeomagCalcRequest):
     """Calculate exact reference geomagnetic field, dip, declination, and convergence from lat/lon."""
@@ -256,28 +269,78 @@ def compute_geomag_reference(payload: GeomagCalcRequest):
             target_date = parsed_dt.astimezone(timezone.utc)
     else:
         target_date = datetime.now(timezone.utc)
-    mwd_date = Date(day=target_date.day, month=target_date.month, year=target_date.year)
+    calc_date = target_date.date()
 
-    mod_name = payload.model.replace(" ", "").upper()
-    if mod_name not in ("WMM2020", "IGRF2020", "WMM2015", "WMM2010"):
-        mod_name = "WMM2020"
-    mag = gmag_point(
-        latitude=payload.latitude,
-        longitude=payload.longitude,
-        altitude=payload.altitude_m / 1000.0,
-        date=mwd_date,
-        gmag_mod=mod_name,
-    )
+    # 1. Normal gravity at latitude using WGS-84 Somigliana formula
+    g_val = GeomagneticReferenceService.normal_gravity_wgs84(payload.latitude)
+    g_total_ref = g_val / 9.80665
 
-    g_val = gravity(payload.latitude)
-    conv_rad = grid_conv(payload.latitude, payload.longitude)
+    # 2. Grid convergence from WGS-84 to UTM (returns degrees directly)
+    conv_deg = GeodeticEngine.calculate_meridian_convergence(payload.latitude, payload.longitude)
+
+    # 3. Geomagnetic components (try compiled .npz first, fallback to pygeomag)
+    mod_name = payload.model.replace(" ", "").replace("-", "").lower()
+    models_dir = Path(_project_root) / "arrowell_engine" / "geomag" / "assets" / "models"
+    npz_candidate = models_dir / f"{mod_name}.npz"
+    if not npz_candidate.exists():
+        npz_candidate = models_dir / "wmm2025.npz"
+
+    if npz_candidate.exists():
+        engine = GeomagneticModelEngine(npz_candidate)
+        mag = engine.calculate(
+            latitude_deg=payload.latitude,
+            longitude_deg=payload.longitude,
+            altitude_meters=payload.altitude_m,
+            survey_date=calc_date,
+        )
+        b_total = mag.total_field_nt
+        dip = mag.dip_deg
+        dec = mag.declination_deg
+    else:
+        geomag_srv = GeomagneticReferenceService()
+        b_total, dip, dec = geomag_srv.get_magnetic_reference(
+            lat_deg=payload.latitude,
+            lon_deg=payload.longitude,
+            alt_meters=payload.altitude_m,
+            survey_date=calc_date,
+        )
 
     return GeomagCalcResponse(
         model=payload.model,
-        b_total_ref=round(mag.F, 1),
-        dip_ref=round(mag.Incl, 2),
-        declination=round(mag.Decl, 2),
-        grid_convergence=round(math.degrees(conv_rad), 2),
-        g_total_ref=round(g_val / 9.80665, 4),
-        g_ms2=round(g_val, 4),
+        b_total_ref=round(float(b_total), 1),
+        dip_ref=round(float(dip), 2),
+        declination=round(float(dec), 2),
+        grid_convergence=round(float(conv_deg), 2),
+        g_total_ref=round(float(g_total_ref), 4),
+        g_ms2=round(float(g_val), 4),
+    )
+
+
+@router.post(
+    "/{well_id}/run-anti-collision",
+    response_model=AntiCollisionScanResponse,
+    summary="Trigger Anti-Collision scan for wellbore against an offset well",
+)
+def run_anti_collision_endpoint(
+    well_id: str,
+    req: AntiCollisionScanRequest,
+    db: Session = Depends(get_db),
+):
+    """Trigger 3D Anti-Collision clearance scan using ISCWSA error models and EOU."""
+    stations = read_well_stations(well_id, db)
+    if not stations or len(stations) < 2:
+        raise HTTPException(status_code=400, detail="Well has insufficient survey stations")
+
+    return run_anticollision_mwdcore(
+        subject_stations=stations,
+        offset_stations=req.offset_stations,
+        offset_well_name=req.offset_well_name,
+        well_id=well_id,
+        model_name=req.model_name,
+        expansion_k=req.expansion_k,
+        well_radius_subject_m=req.well_radius_subject_m,
+        well_radius_offset_m=req.well_radius_offset_m,
+        b_total_ref=req.b_total_ref,
+        dip_ref_deg=req.dip_ref_deg,
+        declination_deg=req.declination_deg,
     )

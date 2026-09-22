@@ -100,3 +100,57 @@ class SagCalculationResponse(BaseModel):
     peak_sag_deg: float
     stations_corrected: int
     corrections: List[SagStationCorrection]
+
+# =====================================================================
+# ANTI-COLLISION & ISCWSA SEPARATION FACTOR SCHEMAS
+# =====================================================================
+class OffsetStationInput(BaseModel):
+    """Input survey coordinates for an offset wellbore station."""
+    md: float = Field(..., description="Measured Depth in meters", ge=0.0)
+    inc: Optional[float] = Field(0.0, description="Inclination in degrees", ge=0.0, le=180.0)
+    azim: Optional[float] = Field(0.0, description="Azimuth in degrees", ge=0.0, lt=360.0)
+    tvd: float = Field(..., description="True Vertical Depth in meters")
+    northing: float = Field(..., description="North/South coordinate (+N/-S) in meters")
+    easting: float = Field(..., description="East/West coordinate (+E/-W) in meters")
+
+
+class AntiCollisionScanRequest(BaseModel):
+    """Request payload for running 3D ISCWSA Anti-Collision clearance scan."""
+    offset_well_name: str = Field(..., description="Name or identifier of the offset well")
+    offset_stations: List[OffsetStationInput] = Field(..., description="Trajectory stations of the offset well")
+    model_name: str = Field("ISCWSA_MWD_REV4", description="ISCWSA tool error model key")
+    expansion_k: float = Field(2.0, description="Confidence multiplier (2.0 for 2-sigma, 2.7955 for 3D 95%)", gt=0.0)
+    well_radius_subject_m: float = Field(0.108, description="Subject wellbore radius in meters", ge=0.0)
+    well_radius_offset_m: float = Field(0.108, description="Offset wellbore radius in meters", ge=0.0)
+    b_total_ref: float = Field(52480.0, description="Geomagnetic total field reference in nT")
+    dip_ref_deg: float = Field(72.15, description="Geomagnetic dip angle reference in degrees")
+    declination_deg: float = Field(12.42, description="Magnetic declination in degrees")
+
+
+class AntiCollisionPointOutput(BaseModel):
+    """Single point of closest approach scan result along the wellbore."""
+    md: float = Field(..., description="Subject well measured depth in meters")
+    tvd: float = Field(..., description="Subject well TVD in meters")
+    northing: float = Field(..., description="Subject well Northing in meters")
+    easting: float = Field(..., description="Subject well Easting in meters")
+    offset_well_name: str = Field(..., description="Offset well name")
+    offset_md: float = Field(..., description="Offset well measured depth at closest approach in meters")
+    center_distance: float = Field(..., description="Center-to-center 3D distance in meters")
+    clearance_distance: float = Field(..., description="Surface-to-surface borehole clearance distance in meters")
+    sigma_subject: float = Field(..., description="Subject well 1-sigma error projected on line of centers (m)")
+    sigma_offset: float = Field(..., description="Offset well 1-sigma error projected on line of centers (m)")
+    combined_uncertainty: float = Field(..., description="Combined expanded uncertainty envelope k*(sigma_S + sigma_O) in meters")
+    separation_factor: float = Field(..., description="Calculated ISCWSA Separation Factor (SF)")
+    is_violation: bool = Field(..., description="True if collision threshold is breached (SF < 1.0)")
+    warning_level: str = Field(..., description="Safety status: 'SAFE', 'WARNING', or 'CRITICAL'")
+
+
+class AntiCollisionScanResponse(BaseModel):
+    """Full Anti-Collision scan response payload."""
+    status: str = Field("success", description="Execution status")
+    well_id: str = Field(..., description="Subject well identifier")
+    offset_well_name: str = Field(..., description="Offset well identifier")
+    min_separation_factor: float = Field(..., description="Minimum Separation Factor along the well")
+    closest_distance_m: float = Field(..., description="Minimum center-to-center distance in meters")
+    closest_md_m: float = Field(..., description="Measured depth at minimum distance in meters")
+    scan_points: List[AntiCollisionPointOutput] = Field(default_factory=list, description="Station-by-station scan profile")
