@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "arrowell-engine"
+version = "0.1.0"
+description = "Core directional drilling and MWD computation engine"
+requires-python = ">=3.11"
+dependencies = [
+    "scipy>=1.17.1",
+]
+
+[tool.setuptools]
+package-dir = {"arrowell_engine" = "."}
+packages = [
+    "arrowell_engine",
+    "arrowell_engine.geomag",
+    "arrowell_engine.msa",
+    "arrowell_engine.sag",
+    "arrowell_engine.sensors",
+    "arrowell_engine.trajectory",
+]
+
+[tool.setuptools.package-data]
+"arrowell_engine" = ["**/*.npz", "**/*.json", "**/*.cof"]

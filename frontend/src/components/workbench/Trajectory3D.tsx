@@ -56,6 +56,13 @@ export const Trajectory3D: React.FC = () => {
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const groupRef = useRef<THREE.Group | null>(null);
 
+  // High-performance dynamic clipping references (Zero GPU re-allocation)
+  const corrTubeMeshRef = useRef<THREE.Mesh | null>(null);
+  const rawTubeMeshRef = useRef<THREE.Mesh | null>(null);
+  const bhaGroupRef = useRef<THREE.Group | null>(null);
+  const activeCurveRef = useRef<THREE.CatmullRomCurve3 | null>(null);
+  const tubularSegmentsRef = useRef<{ corr: number; raw: number }>({ corr: 0, raw: 0 });
+
   // Station mesh picking references
   const stationMeshesRef = useRef<
     { hitMesh: THREE.Mesh; visualMesh: THREE.Mesh; station: SurveyStation }[]
@@ -162,12 +169,12 @@ export const Trajectory3D: React.FC = () => {
     }
   }, [theme]);
 
-  // Construct 3D trajectory geometries with complete GPU memory reclamation
+  // Construct 3D scene elements (Runs strictly on dataset/visual layer changes, NOT on clipMd)
   useEffect(() => {
     const group = groupRef.current;
     if (!group) return;
 
-    // Recursively dispose geometries and materials across all meshes and nested groups
+    // Recursively dispose geometries and materials across all meshes
     group.traverse((child: THREE.Object3D) => {
       if (child instanceof THREE.Mesh) {
         if (child.geometry) {
@@ -183,15 +190,17 @@ export const Trajectory3D: React.FC = () => {
       }
     });
 
-    // Detach all child objects from root group
     while (group.children.length > 0) {
       group.remove(group.children[0]);
     }
 
     stationMeshesRef.current = [];
     lastHoveredVisualRef.current = null;
+    corrTubeMeshRef.current = null;
+    rawTubeMeshRef.current = null;
+    bhaGroupRef.current = null;
+    activeCurveRef.current = null;
 
-    // Spatial coordinate scale (1 meter = 0.05 units in Three.js world space)
     const scale = 0.05;
 
     let tubeRadius = 0.45;
@@ -204,7 +213,7 @@ export const Trajectory3D: React.FC = () => {
       rawTubeRadius = 0.55;
     }
 
-    // Reference surface grid
+    // Surface reference grid
     const gridHelper = new THREE.GridHelper(
       180,
       18,
@@ -214,7 +223,7 @@ export const Trajectory3D: React.FC = () => {
     gridHelper.position.y = 0;
     group.add(gridHelper);
 
-    // Wellhead Kelly Bushing marker at origin
+    // Wellhead marker
     const wellheadGeo = new THREE.CylinderGeometry(1.2, 1.8, 2.5, 16);
     const wellheadMat = new THREE.MeshStandardMaterial({
       color: theme === 'dark' ? 0x38bdf8 : 0x0284c7,
@@ -225,122 +234,111 @@ export const Trajectory3D: React.FC = () => {
     wellhead.position.set(0, 1.25, 0);
     group.add(wellhead);
 
-    // Raw uncorrected MWD trajectory
+    // Raw uncorrected MWD trajectory (Built full-length once)
     if (showRaw && rawStations.length > 1) {
-      const filteredRaw = rawStations.filter((s) => s.md <= clipMd);
-      if (filteredRaw.length > 1) {
-        const rawPoints = filteredRaw.map(
-          (s) => new THREE.Vector3(s.easting * scale, -s.tvd * scale, s.northing * scale)
-        );
-        const rawCurve = new THREE.CatmullRomCurve3(rawPoints);
-        const rawGeo = new THREE.TubeGeometry(rawCurve, rawPoints.length * 3, rawTubeRadius, 8, false);
-        const rawMat = new THREE.MeshBasicMaterial({
-          color: 0xf59e0b,
-          wireframe: false,
-          transparent: true,
-          opacity: 0.7,
-        });
-        group.add(new THREE.Mesh(rawGeo, rawMat));
-      }
+      const rawPoints = rawStations.map(
+        (s) => new THREE.Vector3(s.easting * scale, -s.tvd * scale, s.northing * scale)
+      );
+      const rawCurve = new THREE.CatmullRomCurve3(rawPoints);
+      const rawRadial = 8;
+      const rawTubular = Math.max(20, rawPoints.length * 3);
+      tubularSegmentsRef.current.raw = rawTubular;
+
+      const rawGeo = new THREE.TubeGeometry(rawCurve, rawTubular, rawTubeRadius, rawRadial, false);
+      const rawMat = new THREE.MeshBasicMaterial({
+        color: 0xf59e0b,
+        transparent: true,
+        opacity: 0.7,
+      });
+      const rawMesh = new THREE.Mesh(rawGeo, rawMat);
+      rawTubeMeshRef.current = rawMesh;
+      group.add(rawMesh);
     }
 
-    // Corrected main trajectory
+    // Corrected main trajectory (Built full-length once)
     if (showCorrected && stations.length > 1) {
-      const filteredStations = stations.filter((s) => s.md <= clipMd);
-      if (filteredStations.length > 1) {
-        const points = filteredStations.map(
-          (s) => new THREE.Vector3(s.easting * scale, -s.tvd * scale, s.northing * scale)
-        );
-        const curve = new THREE.CatmullRomCurve3(points);
-        const tubeGeo = new THREE.TubeGeometry(curve, points.length * 4, tubeRadius, 12, false);
-        const tubeMat = new THREE.MeshStandardMaterial({
-          color: theme === 'dark' ? 0x38bdf8 : 0x0284c7,
-          metalness: 0.25,
-          roughness: 0.35,
-        });
-        const tubeMesh = new THREE.Mesh(tubeGeo, tubeMat);
-        group.add(tubeMesh);
+      const points = stations.map(
+        (s) => new THREE.Vector3(s.easting * scale, -s.tvd * scale, s.northing * scale)
+      );
+      const curve = new THREE.CatmullRomCurve3(points);
+      activeCurveRef.current = curve;
 
-        // Survey station pick targets with enlarged invisible hit spheres
-        if (showStationsPoints) {
-          const pointGeo = new THREE.SphereGeometry(tubeRadius * 1.6, 10, 10);
-          const hitGeo = new THREE.SphereGeometry(Math.max(tubeRadius * 4.2, 3.2), 8, 8);
-          const hitMat = new THREE.MeshBasicMaterial({ visible: false });
+      const corrRadial = 12;
+      const corrTubular = Math.max(30, points.length * 4);
+      tubularSegmentsRef.current.corr = corrTubular;
 
-          filteredStations.forEach((stn) => {
-            const pt = new THREE.Vector3(stn.easting * scale, -stn.tvd * scale, stn.northing * scale);
-            const visualMesh = new THREE.Mesh(
-              pointGeo,
-              new THREE.MeshStandardMaterial({
-                color: stn.isQcPass
-                  ? theme === 'dark'
-                    ? 0x38bdf8
-                    : 0x0284c7
-                  : 0xf59e0b,
-                roughness: 0.2,
-                metalness: 0.2,
-              })
-            );
-            visualMesh.position.copy(pt);
-            group.add(visualMesh);
+      const tubeGeo = new THREE.TubeGeometry(curve, corrTubular, tubeRadius, corrRadial, false);
+      const tubeMat = new THREE.MeshStandardMaterial({
+        color: theme === 'dark' ? 0x38bdf8 : 0x0284c7,
+        metalness: 0.25,
+        roughness: 0.35,
+      });
+      const tubeMesh = new THREE.Mesh(tubeGeo, tubeMat);
+      corrTubeMeshRef.current = tubeMesh;
+      group.add(tubeMesh);
 
-            const hitMesh = new THREE.Mesh(hitGeo, hitMat);
-            hitMesh.position.copy(pt);
-            group.add(hitMesh);
+      // Survey station pick targets with hit spheres
+      if (showStationsPoints) {
+        const pointGeo = new THREE.SphereGeometry(tubeRadius * 1.6, 10, 10);
+        const hitGeo = new THREE.SphereGeometry(Math.max(tubeRadius * 4.2, 3.2), 8, 8);
+        const hitMat = new THREE.MeshBasicMaterial({ visible: false });
 
-            stationMeshesRef.current.push({
-              hitMesh,
-              visualMesh,
-              station: stn,
-            });
+        stations.forEach((stn) => {
+          const pt = new THREE.Vector3(stn.easting * scale, -stn.tvd * scale, stn.northing * scale);
+          const visualMesh = new THREE.Mesh(
+            pointGeo,
+            new THREE.MeshStandardMaterial({
+              color: stn.isQcPass
+                ? theme === 'dark'
+                  ? 0x38bdf8
+                  : 0x0284c7
+                : 0xf59e0b,
+              roughness: 0.2,
+              metalness: 0.2,
+            })
+          );
+          visualMesh.position.copy(pt);
+          group.add(visualMesh);
+
+          const hitMesh = new THREE.Mesh(hitGeo, hitMat);
+          hitMesh.position.copy(pt);
+          group.add(hitMesh);
+
+          stationMeshesRef.current.push({
+            hitMesh,
+            visualMesh,
+            station: stn,
           });
-        }
-
-        // BHA and drill bit assembly aligned with trajectory tangent vector
-        const lastStn = filteredStations[filteredStations.length - 1];
-        const bitPos = new THREE.Vector3(
-          lastStn.easting * scale,
-          -lastStn.tvd * scale,
-          lastStn.northing * scale
-        );
-
-        const collarGeo = new THREE.CylinderGeometry(tubeRadius * 1.25, tubeRadius * 1.25, 1.6, 12);
-        const collarMat = new THREE.MeshStandardMaterial({
-          color: 0x64748b,
-          metalness: 0.6,
-          roughness: 0.3,
         });
-        const collarMesh = new THREE.Mesh(collarGeo, collarMat);
-
-        const bitGeo = new THREE.ConeGeometry(tubeRadius * 1.5, 0.7, 12);
-        bitGeo.rotateX(Math.PI);
-        const bitMat = new THREE.MeshStandardMaterial({
-          color: 0x10b981,
-          metalness: 0.4,
-          roughness: 0.25,
-        });
-        const bitMesh = new THREE.Mesh(bitGeo, bitMat);
-        bitMesh.position.set(0, -0.8 - 0.35, 0);
-
-        const bhaGroup = new THREE.Group();
-        bhaGroup.add(collarMesh);
-        bhaGroup.add(bitMesh);
-        bhaGroup.position.copy(bitPos);
-
-        try {
-          const tangent = curve.getTangentAt(1).normalize();
-          const defaultDir = new THREE.Vector3(0, -1, 0);
-          const quat = new THREE.Quaternion().setFromUnitVectors(defaultDir, tangent);
-          bhaGroup.setRotationFromQuaternion(quat);
-        } catch {
-          // Maintain default orientation on degenerate tangent
-        }
-
-        group.add(bhaGroup);
       }
+
+      // BHA and drill bit assembly
+      const collarGeo = new THREE.CylinderGeometry(tubeRadius * 1.25, tubeRadius * 1.25, 1.6, 12);
+      const collarMat = new THREE.MeshStandardMaterial({
+        color: 0x64748b,
+        metalness: 0.6,
+        roughness: 0.3,
+      });
+      const collarMesh = new THREE.Mesh(collarGeo, collarMat);
+
+      const bitGeo = new THREE.ConeGeometry(tubeRadius * 1.5, 0.7, 12);
+      bitGeo.rotateX(Math.PI);
+      const bitMat = new THREE.MeshStandardMaterial({
+        color: 0x10b981,
+        metalness: 0.4,
+        roughness: 0.25,
+      });
+      const bitMesh = new THREE.Mesh(bitGeo, bitMat);
+      bitMesh.position.set(0, -0.8 - 0.35, 0);
+
+      const bhaGroup = new THREE.Group();
+      bhaGroup.add(collarMesh);
+      bhaGroup.add(bitMesh);
+      bhaGroupRef.current = bhaGroup;
+      group.add(bhaGroup);
     }
 
-    // Planned trajectory profile
+    // Planned profile
     if (showPlanned && stations.length > 1) {
       const planPoints = stations.map(
         (s) => new THREE.Vector3((s.easting * 1.05) * scale, (-s.tvd * 0.98) * scale, (s.northing * 1.02) * scale)
@@ -349,14 +347,13 @@ export const Trajectory3D: React.FC = () => {
       const planGeo = new THREE.TubeGeometry(planCurve, planPoints.length * 2, tubeRadius * 0.5, 6, false);
       const planMat = new THREE.MeshBasicMaterial({
         color: theme === 'dark' ? 0x64748b : 0x94a3b8,
-        wireframe: false,
         transparent: true,
         opacity: 0.4,
       });
       group.add(new THREE.Mesh(planGeo, planMat));
     }
 
-    // Offset wellbores for proximity visualization
+    // Offset wellbores
     if (showOffsets) {
       offsetWellsData.forEach((offset) => {
         const offPoints = offset.stations.map(
@@ -376,7 +373,7 @@ export const Trajectory3D: React.FC = () => {
       });
     }
 
-    // Target geological payzone horizon
+    // Target geological horizon
     if (showTargetHorizon) {
       const targetTvd = 2480;
       const targetY = -targetTvd * scale;
@@ -395,7 +392,6 @@ export const Trajectory3D: React.FC = () => {
   }, [
     stations,
     rawStations,
-    clipMd,
     thicknessMode,
     showRaw,
     showCorrected,
@@ -403,9 +399,57 @@ export const Trajectory3D: React.FC = () => {
     showOffsets,
     showTargetHorizon,
     showStationsPoints,
-    activeWell,
     theme,
   ]);
+
+  // Ultra-fast Hardware GPU Clipping (Sub-millisecond 60-120 FPS slider response)
+  useEffect(() => {
+    if (stations.length < 2) return;
+
+    const minMdVal = stations[0].md;
+    const maxMdVal = stations[stations.length - 1].md;
+    const span = maxMdVal - minMdVal || 1.0;
+    const fraction = Math.max(0.001, Math.min(1.0, (clipMd - minMdVal) / span));
+
+    // 1. Instant GPU draw range trimming on corrected trajectory
+    if (corrTubeMeshRef.current?.geometry) {
+      const radial = 12;
+      const totalTubular = tubularSegmentsRef.current.corr;
+      const activeSegments = Math.max(1, Math.round(fraction * totalTubular));
+      const indexCount = activeSegments * radial * 6;
+      corrTubeMeshRef.current.geometry.setDrawRange(0, indexCount);
+    }
+
+    // 2. Instant GPU draw range trimming on raw trajectory
+    if (rawTubeMeshRef.current?.geometry) {
+      const radial = 8;
+      const totalTubular = tubularSegmentsRef.current.raw;
+      const activeSegments = Math.max(1, Math.round(fraction * totalTubular));
+      const indexCount = activeSegments * radial * 6;
+      rawTubeMeshRef.current.geometry.setDrawRange(0, indexCount);
+    }
+
+    // 3. Fast boolean visibility toggle for station spheres
+    stationMeshesRef.current.forEach((item) => {
+      const isVisible = item.station.md <= clipMd;
+      item.visualMesh.visible = isVisible;
+      item.hitMesh.visible = isVisible;
+    });
+
+    // 4. Update BHA position and orientation along spline tangent
+    if (bhaGroupRef.current && activeCurveRef.current) {
+      const bitPos = activeCurveRef.current.getPointAt(fraction);
+      bhaGroupRef.current.position.copy(bitPos);
+      try {
+        const tangent = activeCurveRef.current.getTangentAt(fraction).normalize();
+        const defaultDir = new THREE.Vector3(0, -1, 0);
+        const quat = new THREE.Quaternion().setFromUnitVectors(defaultDir, tangent);
+        bhaGroupRef.current.setRotationFromQuaternion(quat);
+      } catch {
+        // Retain current rotation on zero length tangent
+      }
+    }
+  }, [clipMd, stations]);
 
   // Viewport input handlers
   const handleMouseDown = (e: React.MouseEvent) => {
@@ -461,8 +505,11 @@ export const Trajectory3D: React.FC = () => {
     mouseVecRef.current.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
 
     raycasterRef.current.setFromCamera(mouseVecRef.current, cameraRef.current);
-    const hitObjects = stationMeshesRef.current.map((item) => item.hitMesh);
-    const intersects = raycasterRef.current.intersectObjects(hitObjects, false);
+    const visibleHitObjects = stationMeshesRef.current
+      .filter((item) => item.hitMesh.visible)
+      .map((item) => item.hitMesh);
+
+    const intersects = raycasterRef.current.intersectObjects(visibleHitObjects, false);
 
     if (intersects.length > 0) {
       const hit = intersects[0];

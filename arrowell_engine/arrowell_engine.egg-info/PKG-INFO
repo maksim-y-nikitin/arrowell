@@ -1,0 +1,6 @@
+Metadata-Version: 2.4
+Name: arrowell-engine
+Version: 0.1.0
+Summary: Core directional drilling and MWD computation engine
+Requires-Python: >=3.11
+Requires-Dist: scipy>=1.17.1

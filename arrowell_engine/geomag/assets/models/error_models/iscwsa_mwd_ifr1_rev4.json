@@ -1,0 +1,224 @@
+{
+  "model_name": "ISCWSA_MWD_IFR1_REV4",
+  "revision": "4.0",
+  "source": "ISCWSA / OWSG Committee Open Standard",
+  "terms_count": 27,
+  "terms": [
+    {
+      "mnemonic": "DRFR",
+      "weight_func": "DREF",
+      "magnitude_1sigma": 0.35,
+      "unit": "m",
+      "mode": "R",
+      "description": "Depth reference random error"
+    },
+    {
+      "mnemonic": "DSFS",
+      "weight_func": "DSF",
+      "magnitude_1sigma": 0.00056,
+      "unit": "-",
+      "mode": "S",
+      "description": "Depth scale factor"
+    },
+    {
+      "mnemonic": "DSTG",
+      "weight_func": "DST",
+      "magnitude_1sigma": 2.2e-07,
+      "unit": "1/m",
+      "mode": "G",
+      "description": "Depth temperature/stretch"
+    },
+    {
+      "mnemonic": "ABXY-TI1S",
+      "weight_func": "ABXY-TI1",
+      "magnitude_1sigma": 0.004,
+      "unit": "m/s2",
+      "mode": "S",
+      "description": "XY Accel bias 1"
+    },
+    {
+      "mnemonic": "ABXY-TI2S",
+      "weight_func": "ABXY-TI2",
+      "magnitude_1sigma": 0.004,
+      "unit": "m/s2",
+      "mode": "S",
+      "description": "XY Accel bias 2"
+    },
+    {
+      "mnemonic": "ABZ",
+      "weight_func": "ABZ",
+      "magnitude_1sigma": 0.004,
+      "unit": "m/s2",
+      "mode": "S",
+      "description": "Z Accel bias"
+    },
+    {
+      "mnemonic": "ASXY-TI1S",
+      "weight_func": "ASXY-TI1",
+      "magnitude_1sigma": 0.0005,
+      "unit": "-",
+      "mode": "S",
+      "description": "XY Accel scale factor 1"
+    },
+    {
+      "mnemonic": "ASXY-TI2S",
+      "weight_func": "ASXY-TI2",
+      "magnitude_1sigma": 0.0005,
+      "unit": "-",
+      "mode": "S",
+      "description": "XY Accel scale factor 2"
+    },
+    {
+      "mnemonic": "ASXY-TI3S",
+      "weight_func": "ASXY-TI3",
+      "magnitude_1sigma": 0.0005,
+      "unit": "-",
+      "mode": "S",
+      "description": "XY Accel scale factor 3"
+    },
+    {
+      "mnemonic": "ASZ",
+      "weight_func": "ASZ",
+      "magnitude_1sigma": 0.0005,
+      "unit": "-",
+      "mode": "S",
+      "description": "Z Accel scale factor"
+    },
+    {
+      "mnemonic": "MBXY-TI1S",
+      "weight_func": "MBXY-TI1",
+      "magnitude_1sigma": 70.0,
+      "unit": "nT",
+      "mode": "S",
+      "description": "XY Mag bias 1"
+    },
+    {
+      "mnemonic": "MBXY-TI2S",
+      "weight_func": "MBXY-TI2",
+      "magnitude_1sigma": 70.0,
+      "unit": "nT",
+      "mode": "S",
+      "description": "XY Mag bias 2"
+    },
+    {
+      "mnemonic": "MBZ",
+      "weight_func": "MBZ",
+      "magnitude_1sigma": 70.0,
+      "unit": "nT",
+      "mode": "S",
+      "description": "Z Mag bias (cross-axial)"
+    },
+    {
+      "mnemonic": "MSXY-TI1S",
+      "weight_func": "MSXY-TI1",
+      "magnitude_1sigma": 0.0016,
+      "unit": "-",
+      "mode": "S",
+      "description": "XY Mag scale factor 1"
+    },
+    {
+      "mnemonic": "MSXY-TI2S",
+      "weight_func": "MSXY-TI2",
+      "magnitude_1sigma": 0.0016,
+      "unit": "-",
+      "mode": "S",
+      "description": "XY Mag scale factor 2"
+    },
+    {
+      "mnemonic": "MSXY-TI3S",
+      "weight_func": "MSXY-TI3",
+      "magnitude_1sigma": 0.0016,
+      "unit": "-",
+      "mode": "S",
+      "description": "XY Mag scale factor 3"
+    },
+    {
+      "mnemonic": "MSZ",
+      "weight_func": "MSZ",
+      "magnitude_1sigma": 0.0016,
+      "unit": "-",
+      "mode": "S",
+      "description": "Z Mag scale factor"
+    },
+    {
+      "mnemonic": "AMIL",
+      "weight_func": "AMIL",
+      "magnitude_1sigma": 100.0,
+      "unit": "nT",
+      "mode": "S",
+      "description": "Axial DSI with IFR1 QC"
+    },
+    {
+      "mnemonic": "SAG",
+      "weight_func": "SAG",
+      "magnitude_1sigma": 0.003490658503988659,
+      "unit": "rad",
+      "mode": "S",
+      "description": "BHA sag deflection"
+    },
+    {
+      "mnemonic": "XYM1",
+      "weight_func": "XYM1",
+      "magnitude_1sigma": 0.0017453292519943296,
+      "unit": "rad",
+      "mode": "S",
+      "description": "BHA misalignment 1"
+    },
+    {
+      "mnemonic": "XYM2",
+      "weight_func": "XYM2",
+      "magnitude_1sigma": 0.0017453292519943296,
+      "unit": "rad",
+      "mode": "S",
+      "description": "BHA misalignment 2"
+    },
+    {
+      "mnemonic": "XYM3",
+      "weight_func": "XYM3",
+      "magnitude_1sigma": 0.0017453292519943296,
+      "unit": "rad",
+      "mode": "S",
+      "description": "BHA misalignment 3"
+    },
+    {
+      "mnemonic": "XYM4",
+      "weight_func": "XYM4",
+      "magnitude_1sigma": 0.0017453292519943296,
+      "unit": "rad",
+      "mode": "S",
+      "description": "BHA misalignment 4"
+    },
+    {
+      "mnemonic": "DECG",
+      "weight_func": "AZ",
+      "magnitude_1sigma": 0.002617993877991494,
+      "unit": "rad",
+      "mode": "G",
+      "description": "IFR1 local declination constant"
+    },
+    {
+      "mnemonic": "DBHG",
+      "weight_func": "DBH",
+      "magnitude_1sigma": 26.17993877991494,
+      "unit": "rad*nT",
+      "mode": "G",
+      "description": "IFR1 declination field-dependent"
+    },
+    {
+      "mnemonic": "DECR",
+      "weight_func": "AZ",
+      "magnitude_1sigma": 0.0017453292519943296,
+      "unit": "rad",
+      "mode": "R",
+      "description": "Declination random noise"
+    },
+    {
+      "mnemonic": "DBHR",
+      "weight_func": "DBH",
+      "magnitude_1sigma": 52.35987755982988,
+      "unit": "rad*nT",
+      "mode": "R",
+      "description": "Declination random field-dependent"
+    }
+  ]
+}

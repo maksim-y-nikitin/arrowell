@@ -1,0 +1,88 @@
+{
+  "model_name": "ISCWSA_MWD_REV5",
+  "revision": "5.11",
+  "source": "ISCWSA / OWSG Committee Open Standard",
+  "terms_count": 10,
+  "terms": [
+    {
+      "mnemonic": "DRFR",
+      "weight_func": "DREF",
+      "magnitude_1sigma": 0.35,
+      "unit": "m",
+      "mode": "R",
+      "description": "Depth reference random error"
+    },
+    {
+      "mnemonic": "DSFS",
+      "weight_func": "DSF",
+      "magnitude_1sigma": 0.00056,
+      "unit": "-",
+      "mode": "S",
+      "description": "Depth scale factor"
+    },
+    {
+      "mnemonic": "DSTG",
+      "weight_func": "DST",
+      "magnitude_1sigma": 2.2e-07,
+      "unit": "1/m",
+      "mode": "G",
+      "description": "Depth stretch"
+    },
+    {
+      "mnemonic": "ABXY-TI1S",
+      "weight_func": "ABXY-TI1",
+      "magnitude_1sigma": 0.0035,
+      "unit": "m/s2",
+      "mode": "S",
+      "description": "XY Accel bias 1 (Rev 5.11)"
+    },
+    {
+      "mnemonic": "ABXY-TI2S",
+      "weight_func": "ABXY-TI2",
+      "magnitude_1sigma": 0.0035,
+      "unit": "m/s2",
+      "mode": "S",
+      "description": "XY Accel bias 2 (Rev 5.11)"
+    },
+    {
+      "mnemonic": "ABZ",
+      "weight_func": "ABZ",
+      "magnitude_1sigma": 0.0035,
+      "unit": "m/s2",
+      "mode": "S",
+      "description": "Z Accel bias"
+    },
+    {
+      "mnemonic": "AMIL",
+      "weight_func": "AMIL",
+      "magnitude_1sigma": 200.0,
+      "unit": "nT",
+      "mode": "S",
+      "description": "Axial drillstring magnetization (Rev 5)"
+    },
+    {
+      "mnemonic": "SAG",
+      "weight_func": "SAG",
+      "magnitude_1sigma": 0.003141592653589793,
+      "unit": "rad",
+      "mode": "S",
+      "description": "BHA sag generic"
+    },
+    {
+      "mnemonic": "DECG",
+      "weight_func": "AZ",
+      "magnitude_1sigma": 0.005235987755982988,
+      "unit": "rad",
+      "mode": "G",
+      "description": "Global declination baseline"
+    },
+    {
+      "mnemonic": "DBHG",
+      "weight_func": "DBH",
+      "magnitude_1sigma": 78.53981633974483,
+      "unit": "rad*nT",
+      "mode": "G",
+      "description": "Declination horizontal intensity term"
+    }
+  ]
+}
