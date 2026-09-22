@@ -2,30 +2,30 @@
 
 # 🧭 ArroWell
 
-**High-Performance Directional Drilling Survey Workstation & MWD Analytics Engine**
+**High-Performance Directional Drilling Survey Workstation & MWD Analytics Platform**
 
-[![Powered by mwdstdcore](https://img.shields.io/badge/Math%20Engine-mwdstdcore-FF5722?style=flat&logo=python&logoColor=white)](https://github.com/mwdstd/mwdstdcore)
+[![Engine: arrowell_engine](https://img.shields.io/badge/Math%20Engine-arrowell__engine-0284c7?style=flat&logo=python&logoColor=white)](arrowell_engine/)
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat&logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688?style=flat&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![React 19](https://img.shields.io/badge/React-19.0-61DAFB?style=flat&logo=react&logoColor=black)](https://react.dev/)
-[![Three.js](https://img.shields.io/badge/Three.js-WebGL-000000?style=flat&logo=three.js&logoColor=white)](https://threejs.org/)
+[![Three.js](https://img.shields.io/badge/Three.js-WebGL%20120FPS-000000?style=flat&logo=three.js&logoColor=white)](https://threejs.org/)
 [![DuckDB](https://img.shields.io/badge/DuckDB-In--Memory%20OLAP-FFF000?style=flat&logo=duckdb&logoColor=black)](https://duckdb.org/)
 [![Tailwind CSS v4](https://img.shields.io/badge/Tailwind_CSS-v4.0-06B6D4?style=flat&logo=tailwindcss&logoColor=white)](https://tailwindcss.com/)
 [![Pytest Suite](https://img.shields.io/badge/Tests-8%20Passed%20(100%25)-brightgreen?style=flat&logo=pytest&logoColor=white)](https://docs.pytest.org/)
-[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 <p align="center">
   A cloud-native, CAD-grade engineering workstation for directional wellbore trajectory calculation, 
-  MWD sensor telemetry QA/QC, real-time geomagnetic & mechanical corrections (MSA, SAG, SCC), 
-  and interactive 3D WebGL spatial visualization — <b>powered by the <code>mwdstdcore</code> computational engine</b>.
+  MWD sensor telemetry QA/QC, high-definition continuous inclination fusion, ISCWSA 3D anti-collision clearance scanning, 
+  and real-time physical calibration (MSA, BHA Sag) — <b>powered by the native <code>arrowell_engine</code> computational kernel</b>.
 </p>
 
 <p align="center">
   <a href="#key-features">Key Features</a> •
-  <a href="#computational-core-mwdstdcore">mwdstdcore Integration</a> •
+  <a href="#computational-core-arrowell_engine">arrowell_engine</a> •
   <a href="#architecture--tech-stack">Architecture</a> •
+  <a href="#mathematical-foundation">Math & Physics</a> •
   <a href="#quick-start">Quick Start</a> •
-  <a href="#mathematical-foundation">Math & Physics Engine</a> •
   <a href="#api-endpoints">API Overview</a> •
   <a href="#project-structure">Project Structure</a>
 </p>
@@ -36,66 +36,82 @@
 
 ## 🌟 Key Features
 
-### 1. 3D WebGL & 2D Projection Workstation
+### 1. 3D WebGL Orbit Visualizer & Synchronized 2D Projections
 <p align="center">
-  <img src="docs/images/traj.png" alt="MWD Sensor QC Corridors" width="85%" />
+  <img src="docs/images/traj.png" alt="3D WebGL Wellbore Trajectory and 2D Projections" width="85%" />
 </p>
 
-- **Interactive 3D Orbit View (Three.js)**: True-to-scale wellbore diameter rendering (`Slim`, `Standard`, `Wide`), BHA drill-bit assembly oriented along trajectory tangent vectors using spatial quaternions, offset wells, and target payzone horizons.
-- **Zero-Jitter Hover Raycaster**: High-precision invisible hit-spheres for smooth, instantaneous station telemetry inspection without cursor stutter.
-- **2D Engineering Projections (SVG)**: Synchronized Plan View ($+N / +E$) and Vertical Section View ($TVD \text{ vs. } VS$) with pan, wheel zoom, and real-time cursor coordinate transformation.
-- **CAD-Grade Telemetry HUD**: Live status bar tracking bottom-hole metrics in real time (MD, Inc, Azim, TVD, VS, Max DLS, Closure distance, and active RKB datum).
+- **Hardware-Accelerated 3D Orbit (Three.js)**: Sub-millisecond depth clipping slider using native GPU buffer draw-ranges (`geometry.setDrawRange`) without mesh re-allocation at 60–120 FPS.
+- **True-to-Scale Caliper Rendering**: Dynamic collar thickness visualization (`Slim`, `Standard`, `Wide`), spatial tangent orientation of the BHA drill-bit assembly via unit quaternions, offset well trajectories, and target payzone horizons.
+- **Zero-Jitter Hover Raycaster**: Cursor-following inspection tooltips powered by oversized invisible hit-spheres for stutter-free telemetry picking.
+- **Synchronized 2D Projections (SVG)**: Vectorized Plan View ($+N / +E$) and Vertical Section View ($TVD \text{ vs. } VS$) with pan, wheel zoom, and real-time cursor coordinate transformation.
 
-### 2. MWD Sensor Diagnostics & QA/QC Dashboard
+### 2. MWD Sensor Diagnostics & Tolerance Corridors
 <p align="center">
-  <img src="docs/images/qc.png" alt="MWD Sensor QC Corridors" width="85%" />
+  <img src="docs/images/qc.png" alt="MWD Sensor Diagnostics and QC Acceptance Corridors" width="85%" />
 </p>
 
-- **Real-Time Sensor Corridors**: Continuous validation of tri-axial accelerometer ($G_x, G_y, G_z$) and magnetometer ($B_x, B_y, B_z$) telemetry against reference global geomagnetic models (**WMM 2025, IGRF, HDGM, BGGM**).
-- **Interactive High-Density SVG Charts**: Independent axis zooming (`Wheel` for MD depth stretch, `Shift + Wheel` for value resolution) with cursor-following inspection tooltips.
+- **Real-Time Sensor QC Corridors**: Station-by-station validation of tri-axial accelerometer ($G_x, G_y, G_z$) and magnetometer ($B_x, B_y, B_z$) measurements against global geomagnetic references (**WMM2025, IGRF-14, WMMHR**).
+- **Interactive Multi-Axis SVG Charts**: Independent axis zooming (`Wheel` for MD depth stretching, `Shift + Wheel` for value amplitude scaling) with non-blocking hairline cursor inspection.
 
-### 3. Advanced Directional Corrections Suite
+### 3. Physical Calibration & Correction Suite
 <p align="center">
-  <img src="docs/images/overview.png" alt="MWD Sensor QC Corridors" width="85%" />
+  <img src="docs/images/overview.png" alt="Directional Corrections Suite Overview" width="85%" />
 </p>
 
-- **Multi-Station Analysis (MSA)**: Drillstring magnetization calibration powered by `mwdstdcore` stochastic **Differential Evolution** global optimization (`de_correct`), resolving axial magnetic bias ($\Delta B_z$), cross-axial biases ($B_x, B_y$), and sensor misalignments.
-- **BHA Gravity Sag (SAG)**: Analytical fourth-order beam deflection solver (`mwdstdcore.sag.sagcor`) accounting for collar stiffness ($EI$), stabilizer spacing, fluid buoyancy, and local borehole curvature (DLS).
-- **Short Collar Correction (SCC)**: Non-magnetic drill collar interference compensation.
-- **Non-Blocking Execution**: Background calculation with subtle pulsing button indicators (`animate-ping` / `animate-pulse`) in the command ribbon instead of intrusive screen-blocking modals.
+- **Multi-Station Analysis (MSA)**: Global optimization combining SciPy **Differential Evolution** with **L-BFGS-B** local polishing, decoupling drillstring axial magnetization bias ($\Delta B_z$), cross-axial biases ($B_x, B_y$), sensor scale factors, and block misalignments.
+- **Toolface Coverage Conditioning**: Automatic distribution analysis of Gravity Toolface (GTF) to constrain cross-axial bounds and prevent overfitting during motor sliding intervals.
+- **BHA Gravity Sag (SAG)**: High-speed fourth-order beam deflection solver accelerated by **Numba JIT** ($< 2 \text{ ms}$ execution), resolving bilateral borehole wall contact constraints, drillstring stiffness ($EI$), fluid buoyancy, and local wellbore curvature (DLS).
+- **Vertical Regularization**: Analytical singularity protection locking indeterminate azimuths below $Inc < 0.1^\circ$ to prevent noise-induced azimuth jitter.
 
-### 4. Unified 3-Tab Engineering Settings Modal
+### 4. High-Definition Continuous Inclination (CI) Trajectory Fusion
+- **Dynamic Offset Balancing**: Fuses sparse 6-axis connection surveys (every 30 m) with high-frequency continuous inclination streams (every 0.5–2 m) while drilling and rotating.
+- **Curvature-Weighted Azimuth Distribution**: Allocates trajectory azimuth shifts proportionally across true dynamic dogleg intervals rather than assuming uniform curvature.
+- **TVD-Bounded Douglas-Peucker Thinning**: Compresses trajectory station counts by ~75% while strictly guaranteeing vertical depth fidelity within $\le 0.05 \text{ m}$ ($\le 5 \text{ cm}$).
+
+### 5. ISCWSA 3D Position Uncertainty & Anti-Collision Scan
 <p align="center">
-  <img src="docs/images/settings.png" alt="MWD Sensor QC Corridors" width="85%" />
+  <img src="docs/images/anticol.png" alt="ISCWSA Anti-Collision Proximity Scan" width="85%" />
+</p>
+
+- **Standardized Error Propagation**: Strict adherence to **SPE 67616 / ISCWSA / OWSG** (Rev 4, Rev 5.11, MWD+SAG, IFR1/2) models.
+- **3D Ellipsoid of Uncertainty (EOU)**: Full covariance synthesis ($\Sigma_{NEV} = \Sigma_{\text{rand}} + \sum \vec{e}_{\text{sys}} \vec{e}_{\text{sys}}^T$) with spectral eigen-decomposition.
+- **Real-Time Separation Factor (SF)**: True covariance projection along the line of closest approach ($\vec{u}^T \Sigma \vec{u}$), generating clearance metrics, warning levels (`SAFE`, `WARNING`, `CRITICAL`), and breach alerts.
+
+### 6. Unified 3-Tab Engineering Settings Modal
+<p align="center">
+  <img src="docs/images/settings.png" alt="Unified Engineering Settings Modal" width="85%" />
 </p>
 
 - 📍 **1. Location & Geodesy**: Surface coordinates (Latitude, Longitude), elevation datums (Rotary Kelly Bushing **RKB**, Ground Level **GL**), air gap ($RKB - GL$), well slot assignment, and target reservoir formation.
-- 🧭 **2. Geomagnetic Reference (WMM)**: One-click **"Auto WMM from Coords"** button that computes spherical harmonics and Somigliana gravity directly from Tab 1 coordinates via backend `mwdstdcore`.
+- 🧭 **2. Geomagnetic Reference (WMM)**: One-click **"Auto WMM from Coords"** button that computes spherical harmonics and Somigliana gravity directly from Tab 1 coordinates via backend `arrowell_engine`.
 - 🏗 **3. BHA & Mud Properties (SAG)**: Presets (`6-3/4"`, `4-3/4" Slim`, `8" Heavy`), collar OD/ID, stabilizer spacing, sensor-to-bit distance, fluid density $\rho_{\text{mud}}$, and live beam deflection preview.
 
-### 5. ISCWSA Anti-Collision Proximity Scan
-<p align="center">
-  <img src="docs/images/anticol.png" alt="MWD Sensor QC Corridors" width="85%" />
-</p>
-
-- Automated proximity scanning against offset wellbores using the **ISCWSA Rev 5** error model.
-- Real-time computation of **Separation Factor (SF)**, closest approach distance, and combined $1\sigma$ positional uncertainty ellipsoids.
-
-### 6. Industry-Standard Data Exchange
-- Built-in parsers and exporters for **Halliburton Landmark COMPASS (.txt)**, **CWLS LAS 2.0 (.las)**, CSV, structured JSON, and print-ready **official HTML/PDF survey reports**.
-- **Offline-First Resilience**: Seamless client-side fallback engine ensuring full functionality even if network connectivity to the backend is lost.
+### 7. Industry-Standard Data Exchange
+- **Parsers & Exporters**: Native support for **Halliburton Landmark COMPASS (.txt)**, **CWLS LAS 2.0 (.las)**, CSV, structured JSON, and print-ready **official HTML/PDF survey reports**.
+- **Offline-First UI Architecture**: Client-side fallback computation ensuring complete workstation responsiveness even if backend connectivity drops.
 
 ---
 
-## 🔬 Computational Core: `mwdstdcore`
+## 🔬 Computational Core: `arrowell_engine`
 
-ArroWell delegates all rigorous directional surveying mathematics and telemetry processing to **[`mwdstdcore`](https://github.com/mwdstd/mwdstdcore)**:
+ArroWell relies on its own high-performance, clean-room computational engine (**[`arrowell_engine`](arrowell_engine/)**), completely free of legacy third-party dependencies:
 
-- **Minimum Curvature Method (`mwdstdcore.core.common.mincurv`)**: Exact spatial 3D coordinate integration (North, East, TVD) with tie-in support and Ratio Factor ($RF$) spherical arc interpolation.
-- **Differential Evolution MSA Solver (`mwdstdcore.core.diffev.de_correct`)**: Vectorized global optimization resolving drillstring magnetization biases using particle populations.
-- **A Priori Covariance Modeling (`mwdstdcore.msa.covan`)**: Dynamic uncertainty matrix configuration based on toolface coverage and drillstring rigidity.
-- **BHA Beam Deflection Solver (`mwdstdcore.sag.sagcor`)**: Finite-difference coordinate descent solving Euler-Bernoulli beam bending under gravitational and buoyant loads.
-- **Spherical Harmonic Geomagnetics (`mwdstdcore.gmag`)**: Rigorous spherical harmonic expansion computing total field ($B_{\text{total}}$), dip angle ($\theta_{\text{dip}}$), declination, grid convergence, and Somigliana normal gravity ($G_{\text{total}}$).
+```text
+arrowell_engine/
+├── geomag/          # Spherical harmonics (WMM2025/IGRF-14), Schmidt quasi-normalization, model compilers
+├── msa/             # Multi-Station Analysis calibration engine & toolface distribution filters
+├── sag/             # Numba JIT accelerated BHA beam bending with bilateral contact boundaries
+├── sensors/         # Sensor error models, tri-axial transforms, vertical locks
+├── trajectory/
+│   ├── mcm.py       # Vectorized Minimum Curvature Method (Sawaryn & Thorogood)
+│   ├── continuous.py# High-Definition Continuous Inclination fusion & TVD-bounded thinning
+│   └── uncertainty.py# ISCWSA 3D position error propagation, EOU eigen-analysis, and Separation Factor (SF)
+└── coords.py        # WGS-84 geodetic transformations and UTM meridian grid convergence
+```
+
+- **Zero Factorial Overflow**: Associated Legendre polynomials evaluated with recursive Schmidt quasi-normalization, scaling stably up to degree $n = 133$ (WMMHR).
+- **Vectorized NumPy / SciPy Core**: Trajectory integration, batch geomagnetic evaluations, and covariance tensor accumulations run as vectorized array operations compatible with NumPy 2.x.
 
 ---
 
@@ -105,7 +121,7 @@ ArroWell delegates all rigorous directional surveying mathematics and telemetry 
                                       ┌─────────────────────────────────────┐
                                       │        ArroWell Frontend            │
                                       │  React 19 • Three.js • TypeScript   │
-                                      │      Tailwind CSS v4 • Vite         │
+                                      │    Tailwind CSS v4 • Zustand • Vite │
                                       └──────────────────┬──────────────────┘
                                                          │ HTTP REST / JSON
                                                          ▼
@@ -113,34 +129,35 @@ ArroWell delegates all rigorous directional surveying mathematics and telemetry 
 │                           ArroWell Backend                                │
 │                     FastAPI • Pydantic v2 • SQLAlchemy 2.0                │
 ├───────────────────────────────┬───────────────────────────────────────────┤
-│       Data Storage            │             Math & Analytics              │
-│  DuckDB Columnar Storage      │     mwdstdcore Computational Engine       │
-│  (Persistent / In-Memory)     │     • mincurv (Minimum Curvature)         │
-│                               │     • de_correct (Differential Evolution) │
-│                               │     • sagcor (Euler-Bernoulli Sag)        │
-│                               │     • gmag_point (Spherical Harmonics)    │
+│       Data Storage            │             arrowell_engine               │
+│  DuckDB Columnar Storage      │     Pure-Python Computational Kernel      │
+│  (Persistent / In-Memory)     │     • MCM Trajectory Integration          │
+│                               │     • SciPy Differential Evolution MSA    │
+│                               │     • Numba JIT Euler-Bernoulli Sag       │
+│                               │     • ISCWSA 3D Position Uncertainty & SF │
+│                               │     • HD Continuous Inclination Fusion    │
 └───────────────────────────────┴───────────────────────────────────────────┘
 ```
 
 | Layer | Technologies | Responsibility |
 | :--- | :--- | :--- |
-| **Computational Core** | **`mwdstdcore`** | Minimum Curvature Method, Differential Evolution MSA, BHA Sag beam solver, WMM/IGRF geomagnetics. |
-| **Backend API** | Python 3.11+, FastAPI, SQLAlchemy 2.0, DuckDB, `uv` | REST API, DuckDB persistence, survey validation schemas, automated test suite. |
-| **Frontend UI** | React 19, TypeScript, Three.js, Vite 8, Tailwind CSS v4 | 3D/2D visualizers, high-density data tables, interactive SVG charts, client-side fallback engine. |
-| **DevOps** | Docker, Docker Compose, Nginx (Alpine) | Multi-stage container builds, persistent volume mapping, production reverse-proxying. |
+| **Computational Core** | **`arrowell_engine`** | MCM trajectory math, Differential Evolution MSA, Numba BHA Sag solver, ISCWSA 3D EOU, Continuous Inc fusion, WMM2025/IGRF-14 geomagnetics. |
+| **Backend API** | Python 3.11+, FastAPI, SQLAlchemy 2.0, DuckDB, `uv` | REST endpoints, DuckDB persistence, survey validation schemas, automated test suites. |
+| **Frontend UI** | React 19, TypeScript, Three.js, Zustand, Vite, Tailwind v4 | 3D WebGL viewer, synchronized 2D projections, high-density survey logs, SVG QC dashboards. |
+| **DevOps** | Docker, Docker Compose, Nginx (Alpine) | Multi-stage container builds, volume mapping, production reverse-proxying. |
 
 ---
 
 ## 🧮 Mathematical Foundation
 
-All directional drilling mathematics conform strictly to **ISCWSA / API RP 78** standards:
+All directional drilling mathematics conform strictly to **ISCWSA / SPE / API RP 78** standards:
 
 ### 1. Minimum Curvature Method (MCM)
-Implemented via `mwdstdcore.core.common.mincurv.mincurv`. For consecutive survey stations $1$ and $2$ across measured depth interval $\Delta MD = MD_2 - MD_1$:
+Implemented via `arrowell_engine.trajectory.mcm`. Across measured depth interval $\Delta MD = MD_2 - MD_1$:
 
 $$\Delta DL = \arccos\left(\cos(I_2 - I_1) - \sin I_1 \sin I_2 [1 - \cos(A_2 - A_1)]\right)$$
 
-$$RF = \frac{2}{\Delta DL} \tan\left(\frac{\Delta DL}{2}\right) \quad (\text{Ratio Factor})$$
+$$RF = \frac{2}{\Delta DL} \tan\left(\frac{\Delta DL}{2}\right) \quad (\text{Ratio Factor}, \lim_{\Delta DL \to 0} RF = 1)$$
 
 $$\Delta TVD = \frac{\Delta MD}{2} (\cos I_1 + \cos I_2) \cdot RF$$
 
@@ -148,30 +165,30 @@ $$\Delta North = \frac{\Delta MD}{2} (\sin I_1 \cos A_1 + \sin I_2 \cos A_2) \cd
 
 $$\Delta East = \frac{\Delta MD}{2} (\sin I_1 \sin A_1 + \sin I_2 \sin A_2) \cdot RF$$
 
-$$DLS = \left( \frac{\Delta DL \times 30}{\Delta MD} \right) \times \frac{180}{\pi} \quad [^{\circ}/30\text{m}]$$
+### 2. ISCWSA 3D Position Uncertainty & Anti-Collision (SPE 67616)
+Implemented via `arrowell_engine.trajectory.uncertainty`. Positional uncertainty accumulates random and systematic error terms:
 
-### 2. Multi-Station Analysis (MSA)
-Implemented via `mwdstdcore.core.diffev.de_correct.de_correct`. Eliminates drillstring-induced axial magnetic interference $\Delta B_z$:
+$$\Sigma_{NEV} = \Sigma_{\text{random}} + \sum_{i \in \text{systematic}} \vec{e}_i \vec{e}_i^T$$
 
-$$\vec{B}_{\text{cor}} = \begin{bmatrix} B_x \\ B_y \\ B_z - \Delta B_z \end{bmatrix}, \quad B_{\text{total}} = \sqrt{B_x^2 + B_y^2 + (B_z - \Delta B_z)^2}$$
+Where $\vec{e}_i = \sum_{k} \left( \frac{\partial \Delta \vec{r}_k}{\partial MD} \delta MD_{i,k} + \frac{1}{2} \frac{\partial \Delta \vec{r}_k}{\partial I} \delta I_{i,k} + \frac{1}{2} \frac{\partial \Delta \vec{r}_k}{\partial A} \delta A_{i,k} \right) \cdot \sigma_i$.
 
-The analytical azimuth sensitivity conforms to the **ISCWSA MWD error model**:
+Along the unit line of closest approach $\vec{u} = \frac{\vec{r}_O - \vec{r}_S}{\|\vec{r}_O - \vec{r}_S\|}$ between subject well ($S$) and offset well ($O$):
 
-$$\Delta A_m \approx \frac{\Delta B_z \cdot \sin(I) \cdot \sin(A_m)}{B_{\text{total}} \cdot \cos(\theta_{\text{dip}})} = \frac{\Delta B_z \cdot \sin(I) \cdot \sin(A_m)}{B_H}$$
+$$\sigma_S = \sqrt{\vec{u}^T \Sigma_S \vec{u}}, \quad \sigma_O = \sqrt{\vec{u}^T \Sigma_O \vec{u}}$$
 
-Where $B_H = B_{\text{total}} \cos(\theta_{\text{dip}})$ is the horizontal geomagnetic field component, vanishing at zero inclination ($I = 0^\circ$) or magnetic North/South orientations ($A_m = 0^\circ, 180^\circ$).
+$$SF = \frac{D_{\text{center}} - (R_{\text{well}, S} + R_{\text{well}, O})}{k \cdot (\sigma_S + \sigma_O)}$$
 
-### 3. BHA Gravity Sag Deflection (SAG)
-Implemented via `mwdstdcore.sag.sagcor.sagcor`. Resolves gravitational drooping of the sensor package between stabilizers via fourth-order Euler-Bernoulli beam bending:
+### 3. Multi-Station Analysis (MSA)
+Implemented via `arrowell_engine.msa.engine`. Resolves sensor biases and eliminates drillstring axial magnetization bias $\Delta B_z$:
 
-$$EI(z) \frac{d^4 y}{dz^4} = q_{\text{eff}}(z) \cdot \sin(I)$$
+$$\vec{B}_{\text{cor}} = \begin{bmatrix} (B_x / (1 + MS_x)) - MB_x \\ (B_y / (1 + MS_y)) - MB_y \\ (B_z / (1 + MS_z)) - MB_z \end{bmatrix}, \quad \Delta A_m \approx \frac{\Delta B_z \cdot \sin(I) \cdot \sin(A_m)}{B_{\text{total}} \cdot \cos(\theta_{\text{dip}})}$$
 
-Where:
-- $EI(z) = E \cdot \frac{\pi (OD^4 - ID^4)}{64}$ is the flexural rigidity of the collar sections (structural vs. non-magnetic steel).
-- $q_{\text{eff}} = Q(z) \left(1 - \frac{\rho_{\text{mud}}}{\rho_{\text{steel}}}\right)$ is the effective linear weight in buoyant drilling fluid.
-- The angular deflection at MWD sensor position $z_{\text{mwd}}$ is computed by finite-difference coordinate descent:
+### 4. BHA Gravity Sag Deflection (SAG)
+Implemented via `arrowell_engine.sag.beam`. Minimizes total variational potential energy under bilateral contact barriers:
 
-$$\text{Sag} = -\frac{dy}{dz} \Bigg|_{z = z_{\text{mwd}}}$$
+$$EI(z) \frac{d^4 x}{dz^4} = q_{\text{linear}}(z) \left(1 - \frac{\rho_{\text{mud}}}{\rho_{\text{steel}}}\right) \sin(I)$$
+
+Solved via accelerated coordinate descent with successive over-relaxation (SOR) and Numba JIT compilation.
 
 ---
 
@@ -179,15 +196,16 @@ $$\text{Sag} = -\frac{dy}{dz} \Bigg|_{z = z_{\text{mwd}}}$$
 
 | Method | Endpoint | Description |
 | :--- | :--- | :--- |
-| `GET` | `/health` | Service uptime and database filepath status. |
-| `GET` | `/api/v1/wells/hierarchy` | Full oilfield tree: Field $\rightarrow$ Pad $\rightarrow$ Wellbore. |
-| `GET` | `/api/v1/wells/{well_id}/stations` | Retrieve all directional survey stations for a wellbore. |
-| `POST` | `/api/v1/wells/{well_id}/stations` | Add a survey station, recalculate trajectory via `mwdstdcore`, and persist to DuckDB. |
-| `DELETE` | `/api/v1/wells/{well_id}/stations/{id}` | Delete a survey station from DuckDB. |
-| `POST` | `/api/v1/wells/{well_id}/run-msa` | Execute `mwdstdcore` differential evolution MSA optimization. |
-| `POST` | `/api/v1/wells/{well_id}/run-sag` | Execute `mwdstdcore` analytical BHA Sag beam bending calculation. |
-| `POST` | `/api/v1/wells/calculate-geomag-reference` | Compute exact WMM/IGRF field, dip, declination, and gravity from Lat/Lon. |
-| `POST` | `/api/v1/surveys/calculate-trajectory` | On-the-fly 3D Minimum Curvature calculation from raw station angles. |
+| `GET` | `/health` | Service uptime and database connection status. |
+| `GET` | `/api/v1/wells/hierarchy` | Full oilfield structure: Field $\rightarrow$ Pad $\rightarrow$ Wellbore. |
+| `GET` | `/api/v1/wells/{well_id}/stations` | Retrieve directional survey stations for a wellbore. |
+| `POST` | `/api/v1/wells/{well_id}/stations` | Add a survey station, cascade trajectory recomputation, and persist to DuckDB. |
+| `DELETE` | `/api/v1/wells/{well_id}/stations/{id}` | Delete a survey station and cascade trajectory resynchronization. |
+| `POST` | `/api/v1/wells/{well_id}/run-msa` | Execute SciPy Differential Evolution MSA calibration on telemetry. |
+| `POST` | `/api/v1/wells/{well_id}/run-sag` | Execute Numba JIT BHA Sag deflection analysis with ISCWSA QC. |
+| `POST` | `/api/v1/wells/{well_id}/run-anti-collision` | Run 3D ISCWSA proximity scan, calculate EOU, and compute Separation Factor ($SF$). |
+| `POST` | `/api/v1/wells/calculate-geomag-reference` | Compute WMM2025/IGRF-14 field, dip, declination, and gravity from Lat/Lon. |
+| `POST` | `/api/v1/surveys/calculate-trajectory` | On-the-fly 3D Minimum Curvature calculation from station angles. |
 
 ---
 
@@ -195,7 +213,7 @@ $$\text{Sag} = -\frac{dy}{dz} \Bigg|_{z = z_{\text{mwd}}}$$
 
 ### Option A: Run with Docker Compose (Recommended)
 
-Start the entire workstation (FastAPI Backend + React Frontend + Nginx) with a single command:
+Launch the entire stack (FastAPI Backend + React Frontend + Nginx) with a single command:
 
 ```bash
 docker compose up --build
@@ -207,27 +225,30 @@ docker compose up --build
 
 ---
 
-### Option B: Local Development Setup
+### Option B: Local Monorepo Setup
 
-#### 1. Backend Setup
+#### 1. Backend & Engine Setup
 
-The backend uses [`uv`](https://github.com/astral-sh/uv) for fast, reproducible Python dependency management.
+The backend and engine use [`uv`](https://github.com/astral-sh/uv) for fast, reproducible dependency management.
 
 ```bash
 cd backend
 
-# Install dependencies into virtual environment (including mwdstdcore)
+# Install arrowell_engine in editable development mode
+uv pip install -e ../arrowell_engine
+
+# Sync backend virtual environment
 uv sync
 
 # Run the FastAPI server
-uv run uvicorn main:app --app-dir src --host 0.0.0.0 --port 8000 --reload
+uv run uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-Run the backend test suite:
+Run the automated verification suite:
 ```bash
-uv run pytest
+uv run python tests/verify_engine.py
 ```
-*(All 8 tests execute against an isolated in-memory DuckDB database in ~11 seconds)*
+*(All 8 test suites pass with 100% mathematical and schema verification)*
 
 #### 2. Frontend Setup
 
@@ -249,54 +270,56 @@ Visit [http://localhost:3000](http://localhost:3000) in your browser.
 
 ```text
 .
-├── backend/
-│   ├── data/                    # Persistent DuckDB storage volume
-│   ├── src/
-│   │   ├── api/v1/              # REST route controllers (surveys, wells, geomag)
-│   │   ├── core/                # App config, CORS policy, DuckDB engine, seed runner
-│   │   ├── crud/                # Database operations & cascade trajectory recomputation
-│   │   ├── models/              # SQLAlchemy 2.0 ORM models (Field, Pad, Well, Station)
-│   │   ├── schemas/             # Pydantic v2 validation & telemetry serialization schemas
-│   │   ├── services/            # Directional core (mwdstdcore MCM, MSA solver, BHA SAG)
-│   │   └── main.py              # FastAPI application entrypoint & lifespan management
-│   ├── tests/                   # Pytest suite (In-memory DuckDB, API & math verification)
-│   │   ├── conftest.py          # Pytest fixtures & isolated in-memory DB setup
-│   │   ├── test_api.py          # Integration tests (hierarchy, cascade updates, MSA/SAG)
-│   │   └── test_directional.py  # Mathematical MCM verification tests
-│   ├── Dockerfile               # Multi-stage Python 3.11 container with uv package manager
-│   └── pyproject.toml           # Project dependencies & tool configurations
+├── arrowell_engine/             # Standalone Python directional drilling & MWD kernel
+│   ├── geomag/                  # Spherical harmonics, WMM2025, IGRF-14, Schmidt normalization
+│   ├── msa/                     # SciPy DE optimizer, toolface coverage conditioning, QC filters
+│   ├── sag/                     # Numba JIT accelerated BHA beam bending with contact boundaries
+│   ├── sensors/                 # Sensor error models, tri-axial transforms, vertical locks
+│   ├── trajectory/              # MCM trajectory, Continuous Inc fusion, ISCWSA 3D EOU & Anti-Collision
+│   ├── coords.py                # Geodetic WGS-84 to UTM coordinate projection & convergence
+│   └── pyproject.toml           # Engine packaging and dependencies
 │
-├── frontend/
+├── backend/                     # FastAPI backend web service
+│   ├── src/
+│   │   ├── api/v1/              # REST route controllers (wells, surveys, anti-collision)
+│   │   ├── core/                # Configuration, DuckDB engine, seed data runner
+│   │   ├── crud/                # Database operations & trajectory recalculation
+│   │   ├── models/              # SQLAlchemy 2.0 models (Field, Pad, Well, Station)
+│   │   ├── schemas/             # Pydantic v2 validation & telemetry serialization schemas
+│   │   ├── services/            # Directional core bridge (MCM, MSA, SAG, Anti-Collision)
+│   │   └── main.py              # Application entrypoint & lifespan management
+│   ├── tests/                   # Verification suite (verify_engine.py & integration tests)
+│   ├── Dockerfile               # Multi-stage Python 3.11 container with uv
+│   └── pyproject.toml           # Backend dependencies & tool configurations
+│
+├── frontend/                    # React 19 + TypeScript workstation UI
 │   ├── src/
 │   │   ├── components/
 │   │   │   ├── layout/          # HeaderNav, SidebarTree, StatusBar
 │   │   │   ├── modals/          # AddSurvey, Import, Export, GeomagneticSettings (3-tab)
-│   │   │   └── workbench/       # Trajectory3D (WebGL), Projections2D (SVG), SensorQC,
+│   │   │   └── workbench/       # Trajectory3D, Projections2D, SensorQC,
 │   │   │                        # SurveyLogTable, AntiCollisionScan, TrajectoryWorkspace
-│   │   ├── context/             # Domain context adapters (UI, Engineering, Survey facade)
-│   │   ├── data/                # Sample oilfield survey datasets & offset wells
-│   │   ├── store/               # Zustand global store with persistence & atomic selectors
-│   │   ├── types/               # TypeScript definitions (stations, sensors, geometry)
+│   │   ├── data/                # Sample oilfield datasets & offset wells
+│   │   ├── store/               # Zustand global workstation store with persistence
+│   │   ├── types/               # TypeScript definitions (surveys, sensors, anti-collision)
 │   │   ├── utils/               # API client, Minimum Curvature math, file parsers, i18n
-│   │   ├── App.tsx              # Master layout and workstation orchestrator
+│   │   ├── App.tsx              # Main workstation layout orchestrator
 │   │   ├── index.css            # Tailwind CSS v4 styling & engineering design tokens
 │   │   └── main.tsx             # Application bootstrap & DOM mount
-│   ├── Dockerfile               # Multi-stage production Nginx container build
-│   ├── package.json             # React 19, Three.js, Zustand, Tailwind v4 dependencies
-│   ├── tsconfig.json            # Strict TypeScript compiler options
-│   └── vite.config.ts           # Vite 8 bundler configuration with Tailwind plugin
+│   ├── Dockerfile               # Production multi-stage Nginx container
+│   ├── package.json             # React 19, Three.js, Zustand, Tailwind v4
+│   └── vite.config.ts           # Vite 8 bundler configuration
 │
 ├── docker-compose.yml           # Production multi-container orchestration
-├── LICENSE                      # GNU AGPL-3.0 License
-└── README.md                    # Comprehensive technical documentation & benchmarks
+├── LICENSE                      # MIT License
+└── README.md                    # Workstation documentation & mathematical foundation
 ```
 
 ---
 
-## 📄 License & Attribution
+## 📄 License & Standards
 
-This project is licensed under the terms of the **GNU Affero General Public License v3.0 (AGPL-3.0)**. See the [LICENSE](LICENSE) file for details.
+This project is licensed under the terms of the **MIT License**. See the [LICENSE](LICENSE) file for details.
 
-Directional trajectory integration, geomagnetic reference modeling, and MWD analytical algorithms are powered by **[`mwdstdcore`](https://github.com/mwdstd/mwdstdcore)**.
-
+Directional trajectory mathematics, position uncertainty propagation, and anti-collision algorithms are implemented from published, open industry standards established by the **ISCWSA / SPE Wellbore Positioning Technical Section** and the **IAGA / NOAA National Centers for Environmental Information**.
 ```

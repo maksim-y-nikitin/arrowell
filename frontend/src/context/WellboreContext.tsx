@@ -6,7 +6,7 @@
 import React, { useEffect } from 'react';
 import { useWellboreStore } from '@/store/useWellboreStore';
 import type { ViewLayoutMode } from '@/types';
-import { calculatePhysicalSagAngle } from './EngineeringContext';
+import { calculatePhysicalSagAngle } from '@/utils/directionalMath';
 
 export type { ViewLayoutMode };
 export { calculatePhysicalSagAngle };

@@ -152,3 +152,46 @@ export interface WellPropertiesUpdate {
   datumElevation?: number; // RKB
   targetFormation?: string;
 }
+
+export interface AntiCollisionPoint {
+  md: number;
+  tvd: number;
+  northing: number;
+  easting: number;
+  offsetWellName: string;
+  offsetMd: number;
+  centerDistance: number;
+  clearanceDistance: number;
+  sigmaSubject: number;
+  sigmaOffset: number;
+  combinedUncertainty: number;
+  separationFactor: number;
+  isViolation: boolean;
+  status: 'safe' | 'warning' | 'critical';
+  warningLevel: string;
+}
+
+export interface AntiCollisionScanResponse {
+  status: string;
+  well_id: string;
+  offset_well_name: string;
+  min_separation_factor: number;
+  closest_distance_m: number;
+  closest_md_m: number;
+  scan_points: {
+    md: number;
+    tvd: number;
+    northing: number;
+    easting: number;
+    offset_well_name: string;
+    offset_md: number;
+    center_distance: number;
+    clearance_distance: number;
+    sigma_subject: number;
+    sigma_offset: number;
+    combined_uncertainty: number;
+    separation_factor: number;
+    is_violation: boolean;
+    warning_level: string;
+  }[];
+}

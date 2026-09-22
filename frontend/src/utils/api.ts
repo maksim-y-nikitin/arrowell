@@ -3,6 +3,46 @@
  */
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
+import { AntiCollisionScanResponse } from '@/types';
+
+
+export interface AntiCollisionApiRequest {
+  offset_well_name: string;
+  offset_stations: {
+    md: number;
+    inc?: number;
+    azim?: number;
+    tvd: number;
+    northing: number;
+    easting: number;
+  }[];
+  model_name?: string;
+  expansion_k?: number;
+  well_radius_subject_m?: number;
+  well_radius_offset_m?: number;
+  b_total_ref?: number;
+  dip_ref_deg?: number;
+  declination_deg?: number;
+}
+
+/**
+ * Triggers full 3D ISCWSA position uncertainty and Separation Factor (SF) calculation on backend.
+ */
+export async function triggerAntiCollisionScan(
+  wellId: string,
+  payload: AntiCollisionApiRequest
+): Promise<AntiCollisionScanResponse> {
+  const res = await fetch(`${API_BASE_URL}/wells/${wellId}/run-anti-collision`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok) {
+    throw new Error(`Anti-Collision API failed: ${res.statusText}`);
+  }
+  return res.json();
+}
 
 export interface ApiStation {
   id: number;

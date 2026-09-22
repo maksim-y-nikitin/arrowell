@@ -32,7 +32,7 @@ import {
   triggerMsaAnalysis,
   triggerSagAnalysis,
 } from '@/utils/api';
-import { initialBhaConfig, calculatePhysicalSagAngle } from '@/context/EngineeringContext';
+import { initialBhaConfig, calculatePhysicalSagAngle } from '@/utils/directionalMath';
 
 // Well-specific proposal azimuth mapping to preserve vertical section projections
 const wellProposalAzimuthMap: Record<string, number> = {

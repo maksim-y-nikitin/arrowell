@@ -1,7 +1,45 @@
-import { SurveyStation, GeomagneticReference, UnitSystem } from '@/types';
+import { SurveyStation, GeomagneticReference, UnitSystem, BhaConfig } from '@/types';
 
 const DEG_TO_RAD = Math.PI / 180;
 const RAD_TO_DEG = 180 / Math.PI;
+
+export const initialBhaConfig: BhaConfig = {
+  collarOdMm: 171.5,
+  collarIdMm: 71.4,
+  sensorToBitM: 14.2,
+  stabilizerDistM: 21.5,
+  mudWeightGcm3: 1.20,
+  bhaMaterial: 'nm_steel',
+};
+
+/**
+ * Calculates analytical beam deflection (Euler-Bernoulli) at MWD sensor position.
+ */
+export function calculatePhysicalSagAngle(bha: BhaConfig): number {
+  const od = (bha?.collarOdMm || 171.5) / 1000;
+  const id = (bha?.collarIdMm || 71.4) / 1000;
+  const eModulus = bha?.bhaMaterial === 'nm_steel' ? 1.90e11 : 2.05e11;
+  const momentOfInertia = (Math.PI * (Math.pow(od, 4) - Math.pow(id, 4))) / 64;
+  const bendingStiffness = eModulus * momentOfInertia;
+
+  const rhoSteel = 7850;
+  const rhoMud = (bha?.mudWeightGcm3 || 1.20) * 1000;
+  const buoyancyFactor = Math.max(0.1, 1 - rhoMud / rhoSteel);
+
+  const area = (Math.PI * (od * od - id * id)) / 4;
+  const weightPerMeter = rhoSteel * area * 9.81 * buoyancyFactor;
+
+  const stabilizerSpan = Math.max(1, bha?.stabilizerDistM || 21.5);
+  const sensorOffset = Math.min(bha?.sensorToBitM || 14.2, stabilizerSpan);
+
+  const deflectionAngleRad =
+    (weightPerMeter / (24 * bendingStiffness)) *
+    (Math.pow(stabilizerSpan, 3) -
+      6 * stabilizerSpan * sensorOffset * sensorOffset +
+      4 * Math.pow(sensorOffset, 3));
+
+  return Number(Math.abs(deflectionAngleRad * RAD_TO_DEG).toFixed(3));
+}
 
 /**
  * Recalculates entire trajectory using the industry-standard ISCWSA Minimum Curvature Method
