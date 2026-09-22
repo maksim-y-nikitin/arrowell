@@ -23,3 +23,5 @@ dist/
 project_structure.txt
 create_structure_project.py
 bun.lock
+assets
+mwd

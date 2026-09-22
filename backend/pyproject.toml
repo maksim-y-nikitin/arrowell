@@ -12,6 +12,7 @@ dependencies = [
     "polars>=1.44.2",
     "pydantic-settings>=2.15.0",
     "pygeomag>=1.1.0",
+    "pytest-benchmark>=5.3.0",
     "pytz>=2026.3.post1",
     "scipy>=1.17.1",
     "sqlalchemy>=2.0.54",
