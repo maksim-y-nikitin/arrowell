@@ -5,7 +5,6 @@
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 import { AntiCollisionScanResponse } from '@/types';
 
-
 export interface AntiCollisionApiRequest {
   offset_well_name: string;
   offset_stations: {
@@ -44,6 +43,16 @@ export async function triggerAntiCollisionScan(
   return res.json();
 }
 
+export interface ApiEou {
+  semi_major: number;
+  semi_intermediate: number;
+  semi_minor: number;
+  horiz_semi_major: number;
+  horiz_semi_minor: number;
+  horiz_azimuth: number;
+  eigenvectors: number[][];
+}
+
 export interface ApiStation {
   id: number;
   well_id: string;
@@ -73,6 +82,7 @@ export interface ApiStation {
   delta_dip: number;
   is_qc_pass: boolean;
   status: string;
+  eou?: ApiEou;
 }
 
 export interface MsaResponse {
@@ -126,9 +136,14 @@ export interface GeomagReferenceResponse {
   g_ms2: number;
 }
 
-/**
- * Fetch full oilfield hierarchy tree from DuckDB.
- */
+export interface MsaConfig {
+  method: 'trf' | 'de';
+  maxIter: number;
+  popsize: number;
+  enableMisalignment: boolean;
+  enableRefCorrections: boolean;
+}
+
 export async function fetchHierarchy(): Promise<any[]> {
   const res = await fetch(`${API_BASE_URL}/wells/hierarchy`);
   if (!res.ok) {
@@ -137,9 +152,6 @@ export async function fetchHierarchy(): Promise<any[]> {
   return res.json();
 }
 
-/**
- * Fetch directional survey stations for a specific wellbore.
- */
 export async function fetchWellStations(wellId: string): Promise<ApiStation[]> {
   const res = await fetch(`${API_BASE_URL}/wells/${wellId}/stations`);
   if (!res.ok) {
@@ -148,9 +160,6 @@ export async function fetchWellStations(wellId: string): Promise<ApiStation[]> {
   return res.json();
 }
 
-/**
- * Create a new directional survey station and persist it to DuckDB.
- */
 export async function createWellStation(
   wellId: string,
   stationData: {
@@ -178,9 +187,6 @@ export async function createWellStation(
   return res.json();
 }
 
-/**
- * Delete a directional survey station from DuckDB.
- */
 export async function deleteWellStation(wellId: string, stationId: number): Promise<void> {
   const res = await fetch(`${API_BASE_URL}/wells/${wellId}/stations/${stationId}`, {
     method: 'DELETE',
@@ -191,11 +197,26 @@ export async function deleteWellStation(wellId: string, stationId: number): Prom
 }
 
 /**
- * Trigger mwdstdcore differential evolution MSA optimization on backend.
+ * Request Multi-Station Analysis calibration from backend with configurable solver options.
+ *
+ * @param wellId - Target wellbore identifier.
+ * @param config - Optional optimization solver configuration parameters.
+ * @returns Promise resolving to backend MSA calibration response.
  */
-export async function triggerMsaAnalysis(wellId: string): Promise<MsaResponse> {
+export async function triggerMsaAnalysis(
+  wellId: string,
+  config?: {
+    method?: 'trf' | 'de';
+    max_iter?: number;
+    popsize?: number;
+    enable_misalignment?: boolean;
+    enable_ref_corrections?: boolean;
+  }
+): Promise<MsaResponse> {
   const res = await fetch(`${API_BASE_URL}/wells/${wellId}/run-msa`, {
     method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: config ? JSON.stringify(config) : undefined,
   });
   if (!res.ok) {
     throw new Error(`MSA computation failed: ${res.statusText}`);
@@ -203,9 +224,6 @@ export async function triggerMsaAnalysis(wellId: string): Promise<MsaResponse> {
   return res.json();
 }
 
-/**
- * Trigger mwdstdcore analytical BHA SAG deflection calculation on backend.
- */
 export async function triggerSagAnalysis(
   wellId: string,
   bhaConfig: {
@@ -237,9 +255,6 @@ export async function triggerSagAnalysis(
   return res.json();
 }
 
-/**
- * Compute exact geomagnetic reference parameters (WMM/IGRF) via mwdstdcore.
- */
 export async function calculateGeomagReference(
   req: GeomagReferenceRequest
 ): Promise<GeomagReferenceResponse> {
@@ -254,9 +269,6 @@ export async function calculateGeomagReference(
   return res.json();
 }
 
-/**
- * Calculate 3D trajectory on-the-fly using Minimum Curvature Method via mwdstdcore.
- */
 export async function calculateTrajectory(
   stations: { md: number; inc: number; azim: number }[],
   proposalAzimuth: number = 45.0

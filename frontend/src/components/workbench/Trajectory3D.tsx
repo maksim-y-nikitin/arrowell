@@ -4,16 +4,14 @@ import { useWellbore } from '@/context/WellboreContext';
 import { offsetWellsData } from '@/data/wellsData';
 import { SurveyStation } from '@/types';
 import {
-  Sliders,
   Layers,
   ChevronDown,
   CircleDot,
   CheckCircle2,
   AlertTriangle,
+  ShieldAlert,
 } from 'lucide-react';
-import { formatLength } from '@/utils/directionalMath';
-
-type ThicknessMode = 'ultra' | 'slim' | 'regular';
+import { formatLength, calculateStationEou } from '@/utils/directionalMath';
 
 interface Hovered3DStationInfo {
   station: SurveyStation;
@@ -21,13 +19,18 @@ interface Hovered3DStationInfo {
   clientY: number;
 }
 
-export const Trajectory3D: React.FC = () => {
+interface Trajectory3DProps {
+  visualSubTab?: '3d' | '2d';
+  onSubTabChange?: (tab: '3d' | '2d') => void;
+}
+
+export const Trajectory3D: React.FC<Trajectory3DProps> = ({ visualSubTab = '3d', onSubTabChange }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
-  const { stations, rawStations, unitSystem, activeWell, theme, language } = useWellbore();
+  const { stations, rawStations, unitSystem, theme, language } = useWellbore();
 
-  // Layer visibility toggles
+  // Слои
   const [showRaw, setShowRaw] = useState(true);
   const [showCorrected, setShowCorrected] = useState(true);
   const [showPlanned, setShowPlanned] = useState(true);
@@ -36,10 +39,12 @@ export const Trajectory3D: React.FC = () => {
   const [showStationsPoints, setShowStationsPoints] = useState(true);
   const [showLayersMenu, setShowLayersMenu] = useState(false);
 
-  // Wellbore visual caliper configuration
-  const [thicknessMode, setThicknessMode] = useState<ThicknessMode>('slim');
+  // Физический масштаб 1:1 для эллипсоидов
+  const [showBitEou, setShowBitEou] = useState(true);
+  const [showSurveyEou, setShowSurveyEou] = useState(false);
+  const [showAntiCollisionEou, setShowAntiCollisionEou] = useState(true);
+  const EOU_SCALE = 1.0;
 
-  // Trajectory measured depth clipping threshold
   const maxMd = useMemo(() => {
     return Math.max(...stations.map((s) => s.md), 3500);
   }, [stations]);
@@ -50,39 +55,54 @@ export const Trajectory3D: React.FC = () => {
     setClipMd(maxMd);
   }, [maxMd]);
 
-  // Three.js core references
+  // Three.js Core
   const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const groupRef = useRef<THREE.Group | null>(null);
 
-  // High-performance dynamic clipping references (Zero GPU re-allocation)
-  const corrTubeMeshRef = useRef<THREE.Mesh | null>(null);
-  const rawTubeMeshRef = useRef<THREE.Mesh | null>(null);
+  // GPU Clipping ссылки
+  const corrLineMeshRef = useRef<THREE.Line | null>(null);
+  const rawLineMeshRef = useRef<THREE.Line | null>(null);
+  const stationsPointsMeshRef = useRef<THREE.Points | null>(null);
   const bhaGroupRef = useRef<THREE.Group | null>(null);
+  const bitEouGroupRef = useRef<THREE.Group | null>(null);
+  const surveyEouMeshesRef = useRef<{ mesh: THREE.Group; md: number }[]>([]);
+  const antiCollisionGroupRef = useRef<THREE.Group | null>(null);
   const activeCurveRef = useRef<THREE.CatmullRomCurve3 | null>(null);
-  const tubularSegmentsRef = useRef<{ corr: number; raw: number }>({ corr: 0, raw: 0 });
+  const linePointsCountRef = useRef<{ corr: number; raw: number }>({ corr: 0, raw: 0 });
 
-  // Station mesh picking references
-  const stationMeshesRef = useRef<
-    { hitMesh: THREE.Mesh; visualMesh: THREE.Mesh; station: SurveyStation }[]
-  >([]);
-  const lastHoveredVisualRef = useRef<THREE.Mesh | null>(null);
-  const raycasterRef = useRef(new THREE.Raycaster());
-  const mouseVecRef = useRef(new THREE.Vector2());
   const [hovered3DStation, setHovered3DStation] = useState<Hovered3DStationInfo | null>(null);
 
-  // Viewport camera interaction state
+  // Управление камерой
   const isDraggingRef = useRef(false);
   const isPanningRef = useRef(false);
   const previousMousePositionRef = useRef({ x: 0, y: 0 });
-  const cameraRotationRef = useRef({ theta: Math.PI / 4, phi: Math.PI / 3, radius: 250 });
+  const cameraRotationRef = useRef({ theta: Math.PI / 4, phi: Math.PI / 3, radius: 240 });
   const cameraTargetRef = useRef(new THREE.Vector3(0, -60, 0));
 
   const isRu = language === 'ru';
   const lenUnit = unitSystem === 'metric' ? 'm' : 'ft';
 
-  // Initialize WebGL scene and rendering pipeline
+  // Контрастная круглая текстура точек
+  const circlePointTexture = useMemo(() => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 32;
+    canvas.height = 32;
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      ctx.beginPath();
+      ctx.arc(16, 16, 12, 0, Math.PI * 2);
+      ctx.fillStyle = '#ffffff';
+      ctx.fill();
+      ctx.lineWidth = 2.5;
+      ctx.strokeStyle = 'rgba(0, 0, 0, 0.5)';
+      ctx.stroke();
+    }
+    return new THREE.CanvasTexture(canvas);
+  }, []);
+
+  // Инициализация WebGL
   useEffect(() => {
     const container = containerRef.current;
     const canvas = canvasRef.current;
@@ -92,7 +112,7 @@ export const Trajectory3D: React.FC = () => {
     const height = container.clientHeight || 450;
 
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(theme === 'dark' ? '#090a0f' : '#f8fafc');
+    scene.background = new THREE.Color(theme === 'dark' ? '#0a0d14' : '#eef2f6');
     sceneRef.current = scene;
 
     const camera = new THREE.PerspectiveCamera(45, width / height, 1, 5000);
@@ -111,11 +131,10 @@ export const Trajectory3D: React.FC = () => {
     scene.add(group);
     groupRef.current = group;
 
-    // Illumination
-    const ambientLight = new THREE.AmbientLight(0xffffff, 1.4);
+    const ambientLight = new THREE.AmbientLight(0xffffff, 1.3);
     scene.add(ambientLight);
 
-    const dirLight = new THREE.DirectionalLight(0xffffff, 1.6);
+    const dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
     dirLight.position.set(100, 200, 100);
     scene.add(dirLight);
 
@@ -134,7 +153,6 @@ export const Trajectory3D: React.FC = () => {
 
     updateCameraPos();
 
-    // Render loop
     let animId: number;
     const render = () => {
       animId = requestAnimationFrame(render);
@@ -162,24 +180,20 @@ export const Trajectory3D: React.FC = () => {
     };
   }, []);
 
-  // Synchronize canvas background with active theme
   useEffect(() => {
     if (sceneRef.current) {
-      sceneRef.current.background = new THREE.Color(theme === 'dark' ? '#090a0f' : '#f8fafc');
+      sceneRef.current.background = new THREE.Color(theme === 'dark' ? '#0a0d14' : '#eef2f6');
     }
   }, [theme]);
 
-  // Construct 3D scene elements (Runs strictly on dataset/visual layer changes, NOT on clipMd)
+  // Сборка 3D-геометрии
   useEffect(() => {
     const group = groupRef.current;
     if (!group) return;
 
-    // Recursively dispose geometries and materials across all meshes
     group.traverse((child: THREE.Object3D) => {
-      if (child instanceof THREE.Mesh) {
-        if (child.geometry) {
-          child.geometry.dispose();
-        }
+      if (child instanceof THREE.Mesh || child instanceof THREE.Line || child instanceof THREE.Points) {
+        if (child.geometry) child.geometry.dispose();
         if (child.material) {
           if (Array.isArray(child.material)) {
             child.material.forEach((mat) => mat.dispose());
@@ -194,68 +208,59 @@ export const Trajectory3D: React.FC = () => {
       group.remove(group.children[0]);
     }
 
-    stationMeshesRef.current = [];
-    lastHoveredVisualRef.current = null;
-    corrTubeMeshRef.current = null;
-    rawTubeMeshRef.current = null;
+    surveyEouMeshesRef.current = [];
+    corrLineMeshRef.current = null;
+    rawLineMeshRef.current = null;
+    stationsPointsMeshRef.current = null;
     bhaGroupRef.current = null;
+    bitEouGroupRef.current = null;
+    antiCollisionGroupRef.current = null;
     activeCurveRef.current = null;
 
     const scale = 0.05;
 
-    let tubeRadius = 0.45;
-    let rawTubeRadius = 0.35;
-    if (thicknessMode === 'ultra') {
-      tubeRadius = 0.25;
-      rawTubeRadius = 0.2;
-    } else if (thicknessMode === 'regular') {
-      tubeRadius = 0.75;
-      rawTubeRadius = 0.55;
-    }
-
-    // Surface reference grid
+    // Сетка
     const gridHelper = new THREE.GridHelper(
       180,
       18,
-      theme === 'dark' ? 0x22293f : 0xcbd5e1,
-      theme === 'dark' ? 0x151a2a : 0xe2e8f0
+      theme === 'dark' ? 0x22293f : 0x94a3b8,
+      theme === 'dark' ? 0x141826 : 0xcbd5e1
     );
     gridHelper.position.y = 0;
     group.add(gridHelper);
 
-    // Wellhead marker
-    const wellheadGeo = new THREE.CylinderGeometry(1.2, 1.8, 2.5, 16);
+    // Устье
+    const wellheadGeo = new THREE.CylinderGeometry(0.6, 0.8, 1.2, 16);
     const wellheadMat = new THREE.MeshStandardMaterial({
       color: theme === 'dark' ? 0x38bdf8 : 0x0284c7,
-      metalness: 0.5,
+      metalness: 0.4,
       roughness: 0.3,
     });
     const wellhead = new THREE.Mesh(wellheadGeo, wellheadMat);
-    wellhead.position.set(0, 1.25, 0);
+    wellhead.position.set(0, 0.6, 0);
     group.add(wellhead);
 
-    // Raw uncorrected MWD trajectory (Built full-length once)
+    // 1. Сырая траектория MWD (Линия)
     if (showRaw && rawStations.length > 1) {
       const rawPoints = rawStations.map(
         (s) => new THREE.Vector3(s.easting * scale, -s.tvd * scale, s.northing * scale)
       );
       const rawCurve = new THREE.CatmullRomCurve3(rawPoints);
-      const rawRadial = 8;
-      const rawTubular = Math.max(20, rawPoints.length * 3);
-      tubularSegmentsRef.current.raw = rawTubular;
+      const smoothRawPoints = rawCurve.getPoints(Math.max(50, rawPoints.length * 6));
+      linePointsCountRef.current.raw = smoothRawPoints.length;
 
-      const rawGeo = new THREE.TubeGeometry(rawCurve, rawTubular, rawTubeRadius, rawRadial, false);
-      const rawMat = new THREE.MeshBasicMaterial({
+      const rawGeo = new THREE.BufferGeometry().setFromPoints(smoothRawPoints);
+      const rawMat = new THREE.LineBasicMaterial({
         color: 0xf59e0b,
         transparent: true,
-        opacity: 0.7,
+        opacity: 0.8,
       });
-      const rawMesh = new THREE.Mesh(rawGeo, rawMat);
-      rawTubeMeshRef.current = rawMesh;
-      group.add(rawMesh);
+      const rawLine = new THREE.Line(rawGeo, rawMat);
+      rawLineMeshRef.current = rawLine;
+      group.add(rawLine);
     }
 
-    // Corrected main trajectory (Built full-length once)
+    // 2. Скорректированная траектория (Линия)
     if (showCorrected && stations.length > 1) {
       const points = stations.map(
         (s) => new THREE.Vector3(s.easting * scale, -s.tvd * scale, s.northing * scale)
@@ -263,73 +268,267 @@ export const Trajectory3D: React.FC = () => {
       const curve = new THREE.CatmullRomCurve3(points);
       activeCurveRef.current = curve;
 
-      const corrRadial = 12;
-      const corrTubular = Math.max(30, points.length * 4);
-      tubularSegmentsRef.current.corr = corrTubular;
+      const smoothCorrPoints = curve.getPoints(Math.max(60, points.length * 8));
+      linePointsCountRef.current.corr = smoothCorrPoints.length;
 
-      const tubeGeo = new THREE.TubeGeometry(curve, corrTubular, tubeRadius, corrRadial, false);
-      const tubeMat = new THREE.MeshStandardMaterial({
+      const lineGeo = new THREE.BufferGeometry().setFromPoints(smoothCorrPoints);
+      const lineMat = new THREE.LineBasicMaterial({
         color: theme === 'dark' ? 0x38bdf8 : 0x0284c7,
-        metalness: 0.25,
-        roughness: 0.35,
       });
-      const tubeMesh = new THREE.Mesh(tubeGeo, tubeMat);
-      corrTubeMeshRef.current = tubeMesh;
-      group.add(tubeMesh);
+      const corrLine = new THREE.Line(lineGeo, lineMat);
+      corrLineMeshRef.current = corrLine;
+      group.add(corrLine);
 
-      // Survey station pick targets with hit spheres
-      if (showStationsPoints) {
-        const pointGeo = new THREE.SphereGeometry(tubeRadius * 1.6, 10, 10);
-        const hitGeo = new THREE.SphereGeometry(Math.max(tubeRadius * 4.2, 3.2), 8, 8);
-        const hitMat = new THREE.MeshBasicMaterial({ visible: false });
+      // 3. Точки станций: ровно 6 пикселей, не изменяются при зуме
+      if (showStationsPoints && stations.length > 0) {
+        const positions: number[] = [];
+        const colors: number[] = [];
+        const colorPass = new THREE.Color(theme === 'dark' ? 0x38bdf8 : 0x0284c7);
+        const colorWarn = new THREE.Color(0xf59e0b);
 
         stations.forEach((stn) => {
-          const pt = new THREE.Vector3(stn.easting * scale, -stn.tvd * scale, stn.northing * scale);
-          const visualMesh = new THREE.Mesh(
-            pointGeo,
-            new THREE.MeshStandardMaterial({
-              color: stn.isQcPass
-                ? theme === 'dark'
-                  ? 0x38bdf8
-                  : 0x0284c7
-                : 0xf59e0b,
-              roughness: 0.2,
-              metalness: 0.2,
-            })
+          positions.push(stn.easting * scale, -stn.tvd * scale, stn.northing * scale);
+          const c = stn.isQcPass ? colorPass : colorWarn;
+          colors.push(c.r, c.g, c.b);
+        });
+
+        const pointsGeo = new THREE.BufferGeometry();
+        pointsGeo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+        pointsGeo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+
+        const pointsMat = new THREE.PointsMaterial({
+          size: 6,
+          sizeAttenuation: false,
+          vertexColors: true,
+          map: circlePointTexture,
+          transparent: true,
+          alphaTest: 0.4,
+        });
+
+        const pointsMesh = new THREE.Points(pointsGeo, pointsMat);
+        stationsPointsMeshRef.current = pointsMesh;
+        group.add(pointsMesh);
+      }
+
+      // Генератор эллипсоида 1:1
+      const baseEouGeo = new THREE.SphereGeometry(1, 24, 24);
+
+      const createEouMeshGroup = (
+        majorAlongHole: number,
+        intermediateCross: number,
+        minorNormal: number,
+        colorHex: number,
+        opacityVal: number = 0.25
+      ): THREE.Group => {
+        const eouGroup = new THREE.Group();
+        const visualScale = scale * EOU_SCALE;
+
+        const sx = Math.max(0.05, intermediateCross * visualScale);
+        const sy = Math.max(0.05, majorAlongHole * visualScale);
+        const sz = Math.max(0.05, minorNormal * visualScale);
+
+        const coreMat = new THREE.MeshStandardMaterial({
+          color: colorHex,
+          transparent: true,
+          opacity: opacityVal,
+          roughness: 0.3,
+          metalness: 0.1,
+          side: THREE.DoubleSide,
+          depthWrite: false,
+        });
+        const coreMesh = new THREE.Mesh(baseEouGeo, coreMat);
+        coreMesh.scale.set(sx, sy, sz);
+        eouGroup.add(coreMesh);
+
+        const wireMat = new THREE.MeshBasicMaterial({
+          color: colorHex,
+          wireframe: true,
+          transparent: true,
+          opacity: Math.min(1.0, opacityVal + 0.35),
+        });
+        const wireMesh = new THREE.Mesh(baseEouGeo, wireMat);
+        wireMesh.scale.set(sx, sy, sz);
+        eouGroup.add(wireMesh);
+
+        return eouGroup;
+      };
+
+      const alignGroupToTangent = (groupObj: THREE.Group, tangent: THREE.Vector3) => {
+        const defaultUp = new THREE.Vector3(0, 1, 0);
+        const quat = new THREE.Quaternion().setFromUnitVectors(defaultUp, tangent.clone().normalize());
+        groupObj.setRotationFromQuaternion(quat);
+      };
+
+      // Эллипсоид забоя
+      if (showBitEou && stations.length > 0) {
+        const lastStn = stations[stations.length - 1];
+        const eouData = lastStn.eou || calculateStationEou(lastStn.md, lastStn.inc, lastStn.azim);
+        const bitEou = createEouMeshGroup(
+          eouData.semiMajor,
+          eouData.semiIntermediate,
+          eouData.semiMinor,
+          theme === 'dark' ? 0x38bdf8 : 0x0284c7,
+          0.30
+        );
+        const bitPos = new THREE.Vector3(lastStn.easting * scale, -lastStn.tvd * scale, lastStn.northing * scale);
+        bitEou.position.copy(bitPos);
+
+        try {
+          const tangent = curve.getTangentAt(1).normalize();
+          alignGroupToTangent(bitEou, tangent);
+        } catch {
+          // retain
+        }
+
+        bitEouGroupRef.current = bitEou;
+        group.add(bitEou);
+      }
+
+      // Эллипсоиды всех замеров
+      if (showSurveyEou) {
+        stations.forEach((stn, idx) => {
+          if (idx === 0) return;
+          const eouData = stn.eou || calculateStationEou(stn.md, stn.inc, stn.azim);
+          const stnEou = createEouMeshGroup(
+            eouData.semiMajor,
+            eouData.semiIntermediate,
+            eouData.semiMinor,
+            stn.isQcPass ? (theme === 'dark' ? 0x38bdf8 : 0x0284c7) : 0xf59e0b,
+            0.15
           );
-          visualMesh.position.copy(pt);
-          group.add(visualMesh);
+          const pos = new THREE.Vector3(stn.easting * scale, -stn.tvd * scale, stn.northing * scale);
+          stnEou.position.copy(pos);
 
-          const hitMesh = new THREE.Mesh(hitGeo, hitMat);
-          hitMesh.position.copy(pt);
-          group.add(hitMesh);
+          const tIdx = Math.max(0.001, idx / (stations.length - 1));
+          try {
+            const tangent = curve.getTangentAt(tIdx).normalize();
+            alignGroupToTangent(stnEou, tangent);
+          } catch {
+            // retain
+          }
 
-          stationMeshesRef.current.push({
-            hitMesh,
-            visualMesh,
-            station: stn,
-          });
+          group.add(stnEou);
+          surveyEouMeshesRef.current.push({ mesh: stnEou, md: stn.md });
         });
       }
 
-      // BHA and drill bit assembly
-      const collarGeo = new THREE.CylinderGeometry(tubeRadius * 1.25, tubeRadius * 1.25, 1.6, 12);
+      // Предупреждение о сближении (только при угрозе SF < 1.5)
+      if (showAntiCollisionEou && offsetWellsData.length > 0) {
+        const antiGroup = new THREE.Group();
+
+        offsetWellsData.forEach((offsetWell) => {
+          let minDistance = Infinity;
+          let closestSubjectIdx = -1;
+          let closestOffsetIdx = -1;
+
+          stations.forEach((stn, sIdx) => {
+            if (stn.md < 200) return;
+            offsetWell.stations.forEach((off, oIdx) => {
+              const dist = Math.hypot(
+                stn.northing - off.northing,
+                stn.easting - off.easting,
+                stn.tvd - off.tvd
+              );
+              if (dist < minDistance) {
+                minDistance = dist;
+                closestSubjectIdx = sIdx;
+                closestOffsetIdx = oIdx;
+              }
+            });
+          });
+
+          if (closestSubjectIdx >= 0 && closestOffsetIdx >= 0) {
+            const sub = stations[closestSubjectIdx];
+            const off = offsetWell.stations[closestOffsetIdx];
+
+            const eouSub = sub.eou || calculateStationEou(sub.md, sub.inc, sub.azim);
+            const eouOff = calculateStationEou(off.md, 1.5, 45.0);
+
+            const combinedEnvelope = eouSub.semiMajor + eouOff.semiMajor;
+            const sf = minDistance / (combinedEnvelope || 1.0);
+
+            if (sf < 1.5) {
+              const alertColor = sf < 1.0 ? 0xef4444 : 0xf59e0b;
+
+              const subPos = new THREE.Vector3(sub.easting * scale, -sub.tvd * scale, sub.northing * scale);
+              const offPos = new THREE.Vector3(off.easting * scale, -off.tvd * scale, off.northing * scale);
+
+              const activeApproachEou = createEouMeshGroup(
+                eouSub.semiMajor,
+                eouSub.semiIntermediate,
+                eouSub.semiMinor,
+                alertColor,
+                0.45
+              );
+              activeApproachEou.position.copy(subPos);
+              try {
+                const tFraction = closestSubjectIdx / (stations.length - 1 || 1);
+                const tangentSub = curve.getTangentAt(tFraction).normalize();
+                alignGroupToTangent(activeApproachEou, tangentSub);
+              } catch {
+                // retain
+              }
+              antiGroup.add(activeApproachEou);
+
+              const offsetApproachEou = createEouMeshGroup(
+                eouOff.semiMajor,
+                eouOff.semiIntermediate,
+                eouOff.semiMinor,
+                alertColor,
+                0.45
+              );
+              offsetApproachEou.position.copy(offPos);
+
+              let offsetTangent = new THREE.Vector3(0, -1, 0);
+              if (closestOffsetIdx < offsetWell.stations.length - 1) {
+                const nextOff = offsetWell.stations[closestOffsetIdx + 1];
+                offsetTangent.set(
+                  (nextOff.easting - off.easting) * scale,
+                  -(nextOff.tvd - off.tvd) * scale,
+                  (nextOff.northing - off.northing) * scale
+                ).normalize();
+              }
+              alignGroupToTangent(offsetApproachEou, offsetTangent);
+              antiGroup.add(offsetApproachEou);
+
+              const lineGeo = new THREE.BufferGeometry().setFromPoints([subPos, offPos]);
+              const lineMat = new THREE.LineDashedMaterial({
+                color: alertColor,
+                dashSize: 1.5,
+                gapSize: 0.8,
+                linewidth: 2,
+              });
+              const distLine = new THREE.Line(lineGeo, lineMat);
+              distLine.computeLineDistances();
+              antiGroup.add(distLine);
+            }
+          }
+        });
+
+        if (antiGroup.children.length > 0) {
+          antiCollisionGroupRef.current = antiGroup;
+          group.add(antiGroup);
+        }
+      }
+
+      // Компактный наконечник долота
+      const collarGeo = new THREE.CylinderGeometry(0.3, 0.3, 1.2, 12);
       const collarMat = new THREE.MeshStandardMaterial({
         color: 0x64748b,
-        metalness: 0.6,
+        metalness: 0.5,
         roughness: 0.3,
       });
       const collarMesh = new THREE.Mesh(collarGeo, collarMat);
 
-      const bitGeo = new THREE.ConeGeometry(tubeRadius * 1.5, 0.7, 12);
+      const bitGeo = new THREE.ConeGeometry(0.4, 0.5, 12);
       bitGeo.rotateX(Math.PI);
       const bitMat = new THREE.MeshStandardMaterial({
         color: 0x10b981,
-        metalness: 0.4,
+        metalness: 0.3,
         roughness: 0.25,
       });
       const bitMesh = new THREE.Mesh(bitGeo, bitMat);
-      bitMesh.position.set(0, -0.8 - 0.35, 0);
+      bitMesh.position.set(0, -0.6 - 0.25, 0);
 
       const bhaGroup = new THREE.Group();
       bhaGroup.add(collarMesh);
@@ -338,22 +537,25 @@ export const Trajectory3D: React.FC = () => {
       group.add(bhaGroup);
     }
 
-    // Planned profile
+    // 4. Проектный ствол
     if (showPlanned && stations.length > 1) {
       const planPoints = stations.map(
         (s) => new THREE.Vector3((s.easting * 1.05) * scale, (-s.tvd * 0.98) * scale, (s.northing * 1.02) * scale)
       );
       const planCurve = new THREE.CatmullRomCurve3(planPoints);
-      const planGeo = new THREE.TubeGeometry(planCurve, planPoints.length * 2, tubeRadius * 0.5, 6, false);
-      const planMat = new THREE.MeshBasicMaterial({
+      const smoothPlanPoints = planCurve.getPoints(Math.max(40, planPoints.length * 4));
+      const planGeo = new THREE.BufferGeometry().setFromPoints(smoothPlanPoints);
+      const planMat = new THREE.LineDashedMaterial({
         color: theme === 'dark' ? 0x64748b : 0x94a3b8,
-        transparent: true,
-        opacity: 0.4,
+        dashSize: 2,
+        gapSize: 1.5,
       });
-      group.add(new THREE.Mesh(planGeo, planMat));
+      const planLine = new THREE.Line(planGeo, planMat);
+      planLine.computeLineDistances();
+      group.add(planLine);
     }
 
-    // Offset wellbores
+    // 5. Соседние скважины
     if (showOffsets) {
       offsetWellsData.forEach((offset) => {
         const offPoints = offset.stations.map(
@@ -361,48 +563,49 @@ export const Trajectory3D: React.FC = () => {
         );
         if (offPoints.length > 1) {
           const offCurve = new THREE.CatmullRomCurve3(offPoints);
-          const offGeo = new THREE.TubeGeometry(offCurve, offPoints.length * 2, tubeRadius * 0.7, 6, false);
-          const offMat = new THREE.MeshStandardMaterial({
-            color: new THREE.Color(0xa855f7),
-            roughness: 0.5,
+          const smoothOffPoints = offCurve.getPoints(Math.max(40, offPoints.length * 4));
+          const offGeo = new THREE.BufferGeometry().setFromPoints(smoothOffPoints);
+          const offMat = new THREE.LineBasicMaterial({
+            color: 0xa855f7,
             transparent: true,
-            opacity: 0.65,
+            opacity: 0.75,
           });
-          group.add(new THREE.Mesh(offGeo, offMat));
+          const offLine = new THREE.Line(offGeo, offMat);
+          group.add(offLine);
         }
       });
     }
 
-    // Target geological horizon
+    // 6. Геологический горизонт (сетка)
     if (showTargetHorizon) {
       const targetTvd = 2480;
       const targetY = -targetTvd * scale;
-      const horizonGeo = new THREE.PlaneGeometry(160, 160);
-      horizonGeo.rotateX(-Math.PI / 2);
-      const horizonMat = new THREE.MeshBasicMaterial({
-        color: 0x10b981,
-        transparent: true,
-        opacity: theme === 'dark' ? 0.08 : 0.05,
-        side: THREE.DoubleSide,
-      });
-      const horizonMesh = new THREE.Mesh(horizonGeo, horizonMat);
-      horizonMesh.position.set(20, targetY, 20);
-      group.add(horizonMesh);
+      const horizonGrid = new THREE.GridHelper(
+        160,
+        16,
+        0x10b981,
+        theme === 'dark' ? 0x064e3b : 0xa7f3d0
+      );
+      horizonGrid.position.set(20, targetY, 20);
+      group.add(horizonGrid);
     }
   }, [
     stations,
     rawStations,
-    thicknessMode,
     showRaw,
     showCorrected,
     showPlanned,
     showOffsets,
     showTargetHorizon,
     showStationsPoints,
+    showBitEou,
+    showSurveyEou,
+    showAntiCollisionEou,
+    circlePointTexture,
     theme,
   ]);
 
-  // Ultra-fast Hardware GPU Clipping (Sub-millisecond 60-120 FPS slider response)
+  // Fast GPU Line & Points Clipping
   useEffect(() => {
     if (stations.length < 2) return;
 
@@ -411,63 +614,80 @@ export const Trajectory3D: React.FC = () => {
     const span = maxMdVal - minMdVal || 1.0;
     const fraction = Math.max(0.001, Math.min(1.0, (clipMd - minMdVal) / span));
 
-    // 1. Instant GPU draw range trimming on corrected trajectory
-    if (corrTubeMeshRef.current?.geometry) {
-      const radial = 12;
-      const totalTubular = tubularSegmentsRef.current.corr;
-      const activeSegments = Math.max(1, Math.round(fraction * totalTubular));
-      const indexCount = activeSegments * radial * 6;
-      corrTubeMeshRef.current.geometry.setDrawRange(0, indexCount);
+    if (corrLineMeshRef.current?.geometry) {
+      const totalPoints = linePointsCountRef.current.corr;
+      const activeCount = Math.max(2, Math.round(fraction * totalPoints));
+      corrLineMeshRef.current.geometry.setDrawRange(0, activeCount);
     }
 
-    // 2. Instant GPU draw range trimming on raw trajectory
-    if (rawTubeMeshRef.current?.geometry) {
-      const radial = 8;
-      const totalTubular = tubularSegmentsRef.current.raw;
-      const activeSegments = Math.max(1, Math.round(fraction * totalTubular));
-      const indexCount = activeSegments * radial * 6;
-      rawTubeMeshRef.current.geometry.setDrawRange(0, indexCount);
+    if (rawLineMeshRef.current?.geometry) {
+      const totalPoints = linePointsCountRef.current.raw;
+      const activeCount = Math.max(2, Math.round(fraction * totalPoints));
+      rawLineMeshRef.current.geometry.setDrawRange(0, activeCount);
     }
 
-    // 3. Fast boolean visibility toggle for station spheres
-    stationMeshesRef.current.forEach((item) => {
-      const isVisible = item.station.md <= clipMd;
-      item.visualMesh.visible = isVisible;
-      item.hitMesh.visible = isVisible;
+    if (stationsPointsMeshRef.current?.geometry) {
+      const visibleStationCount = stations.filter((s) => s.md <= clipMd).length;
+      stationsPointsMeshRef.current.geometry.setDrawRange(0, visibleStationCount);
+    }
+
+    surveyEouMeshesRef.current.forEach((item) => {
+      item.mesh.visible = item.md <= clipMd;
     });
 
-    // 4. Update BHA position and orientation along spline tangent
-    if (bhaGroupRef.current && activeCurveRef.current) {
+    if (activeCurveRef.current) {
       const bitPos = activeCurveRef.current.getPointAt(fraction);
-      bhaGroupRef.current.position.copy(bitPos);
+      let quat = new THREE.Quaternion();
       try {
         const tangent = activeCurveRef.current.getTangentAt(fraction).normalize();
         const defaultDir = new THREE.Vector3(0, -1, 0);
-        const quat = new THREE.Quaternion().setFromUnitVectors(defaultDir, tangent);
-        bhaGroupRef.current.setRotationFromQuaternion(quat);
+        quat.setFromUnitVectors(defaultDir, tangent);
       } catch {
-        // Retain current rotation on zero length tangent
+        // retain
+      }
+
+      if (bhaGroupRef.current) {
+        bhaGroupRef.current.position.copy(bitPos);
+        bhaGroupRef.current.setRotationFromQuaternion(quat);
+      }
+
+      if (bitEouGroupRef.current) {
+        bitEouGroupRef.current.position.copy(bitPos);
+
+        const lastVisibleStn = stations.slice().reverse().find((s) => s.md <= clipMd) || stations[0];
+        const dynamicEou = lastVisibleStn.eou || calculateStationEou(clipMd, lastVisibleStn.inc, lastVisibleStn.azim);
+        const visualScale = 0.05 * EOU_SCALE;
+
+        const sx = Math.max(0.05, dynamicEou.semiIntermediate * visualScale);
+        const sy = Math.max(0.05, dynamicEou.semiMajor * visualScale);
+        const sz = Math.max(0.05, dynamicEou.semiMinor * visualScale);
+
+        bitEouGroupRef.current.children.forEach((child) => {
+          child.scale.set(sx, sy, sz);
+        });
+
+        try {
+          const tangent = activeCurveRef.current.getTangentAt(fraction).normalize();
+          const defaultUp = new THREE.Vector3(0, 1, 0);
+          const eouQuat = new THREE.Quaternion().setFromUnitVectors(defaultUp, tangent);
+          bitEouGroupRef.current.setRotationFromQuaternion(eouQuat);
+        } catch {
+          // retain
+        }
       }
     }
   }, [clipMd, stations]);
 
-  // Viewport input handlers
+  // Обработчики мыши
   const handleMouseDown = (e: React.MouseEvent) => {
-    if (e.button === 0) {
-      isDraggingRef.current = true;
-    } else if (e.button === 2) {
-      isPanningRef.current = true;
-    }
+    if (e.button === 0) isDraggingRef.current = true;
+    else if (e.button === 2) isPanningRef.current = true;
     previousMousePositionRef.current = { x: e.clientX, y: e.clientY };
   };
 
   const handleMouseMove = (e: React.MouseEvent) => {
     if (isDraggingRef.current || isPanningRef.current) {
       if (hovered3DStation) setHovered3DStation(null);
-      if (lastHoveredVisualRef.current) {
-        lastHoveredVisualRef.current.scale.set(1, 1, 1);
-        lastHoveredVisualRef.current = null;
-      }
 
       const deltaX = e.clientX - previousMousePositionRef.current.x;
       const deltaY = e.clientY - previousMousePositionRef.current.y;
@@ -498,43 +718,38 @@ export const Trajectory3D: React.FC = () => {
       return;
     }
 
-    if (!containerRef.current || !cameraRef.current || stationMeshesRef.current.length === 0) return;
+    if (!containerRef.current || !cameraRef.current || stations.length === 0) return;
 
     const rect = containerRef.current.getBoundingClientRect();
-    mouseVecRef.current.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-    mouseVecRef.current.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+    const scale = 0.05;
+    let closestStation: SurveyStation | null = null;
+    let minDistancePixels = 12;
 
-    raycasterRef.current.setFromCamera(mouseVecRef.current, cameraRef.current);
-    const visibleHitObjects = stationMeshesRef.current
-      .filter((item) => item.hitMesh.visible)
-      .map((item) => item.hitMesh);
+    for (const stn of stations) {
+      if (stn.md > clipMd) continue;
 
-    const intersects = raycasterRef.current.intersectObjects(visibleHitObjects, false);
+      const worldPos = new THREE.Vector3(stn.easting * scale, -stn.tvd * scale, stn.northing * scale);
+      const ndc = worldPos.project(cameraRef.current);
 
-    if (intersects.length > 0) {
-      const hit = intersects[0];
-      const found = stationMeshesRef.current.find((item) => item.hitMesh === hit.object);
-      if (found) {
-        if (lastHoveredVisualRef.current && lastHoveredVisualRef.current !== found.visualMesh) {
-          lastHoveredVisualRef.current.scale.set(1, 1, 1);
-        }
-        found.visualMesh.scale.set(2.2, 2.2, 2.2);
-        lastHoveredVisualRef.current = found.visualMesh;
+      if (ndc.z > 1 || ndc.z < -1) continue;
 
-        setHovered3DStation({
-          station: found.station,
-          clientX: e.clientX,
-          clientY: e.clientY,
-        });
-        return;
+      const screenX = ((ndc.x + 1) / 2) * rect.width + rect.left;
+      const screenY = ((-ndc.y + 1) / 2) * rect.height + rect.top;
+
+      const dist = Math.hypot(e.clientX - screenX, e.clientY - screenY);
+      if (dist < minDistancePixels) {
+        minDistancePixels = dist;
+        closestStation = stn;
       }
     }
 
-    if (lastHoveredVisualRef.current) {
-      lastHoveredVisualRef.current.scale.set(1, 1, 1);
-      lastHoveredVisualRef.current = null;
-    }
-    if (hovered3DStation) {
+    if (closestStation) {
+      setHovered3DStation({
+        station: closestStation,
+        clientX: e.clientX,
+        clientY: e.clientY,
+      });
+    } else if (hovered3DStation) {
       setHovered3DStation(null);
     }
   };
@@ -547,10 +762,6 @@ export const Trajectory3D: React.FC = () => {
   const handleMouseLeave = () => {
     isDraggingRef.current = false;
     isPanningRef.current = false;
-    if (lastHoveredVisualRef.current) {
-      lastHoveredVisualRef.current.scale.set(1, 1, 1);
-      lastHoveredVisualRef.current = null;
-    }
     if (hovered3DStation) {
       setHovered3DStation(null);
     }
@@ -576,7 +787,7 @@ export const Trajectory3D: React.FC = () => {
 
   const setCameraView = (view: 'iso' | 'top' | 'side' | 'bit') => {
     if (view === 'iso') {
-      cameraRotationRef.current = { theta: Math.PI / 4, phi: Math.PI / 3, radius: 250 };
+      cameraRotationRef.current = { theta: Math.PI / 4, phi: Math.PI / 3, radius: 240 };
       cameraTargetRef.current = new THREE.Vector3(0, -60, 0);
     } else if (view === 'top') {
       cameraRotationRef.current = { theta: 0, phi: 0.001, radius: 280 };
@@ -609,82 +820,82 @@ export const Trajectory3D: React.FC = () => {
   };
 
   return (
-    <div className="w-full h-full flex flex-col relative select-none overflow-hidden font-mono text-xs transition-colors bg-white dark:bg-[#090a0f]">
-      {/* HUD Navigation Toolbar */}
-      <div className="absolute top-3 left-3 right-3 z-10 flex items-center justify-between gap-2 pointer-events-none">
-        <div className="flex items-center gap-1 p-1 rounded-lg border shadow-md pointer-events-auto backdrop-blur-md transition-colors bg-white/90 dark:bg-[#0c0e17]/90 border-slate-200 dark:border-[#171c2b]">
-          <button
-            onClick={() => setCameraView('iso')}
-            className="px-2.5 py-1 rounded text-3xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-200/70 dark:hover:bg-[#1a2035] transition-colors"
-          >
-            {isRu ? 'Изометрия' : 'Isometric'}
-          </button>
-          <button
-            onClick={() => setCameraView('top')}
-            className="px-2.5 py-1 rounded text-3xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-200/70 dark:hover:bg-[#1a2035] transition-colors"
-          >
-            {isRu ? 'План (Top)' : 'Top Plan'}
-          </button>
-          <button
-            onClick={() => setCameraView('side')}
-            className="px-2.5 py-1 rounded text-3xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-200/70 dark:hover:bg-[#1a2035] transition-colors"
-          >
-            {isRu ? 'Профиль (Side)' : 'Side View'}
-          </button>
-          <button
-            onClick={() => setCameraView('bit')}
-            className="px-2.5 py-1 rounded text-3xs font-semibold text-sky-600 dark:text-sky-400 hover:bg-slate-200/70 dark:hover:bg-[#1a2035] transition-colors"
-          >
-            {isRu ? 'Долото (BHA)' : 'Drill Bit'}
-          </button>
+    <div className="w-full h-full flex flex-col select-none overflow-hidden font-mono text-xs transition-colors bg-[#eef2f6] dark:bg-[#0a0d14]">
+      {/* СТАТИЧНАЯ ШАПКА ВЬЮПОРТА (h-8): 1-в-1 как в 2D-режиме, тумблер 3D/2D не прыгает! */}
+      <div className="h-8 px-2.5 border-b flex items-center justify-between gap-2 shrink-0 bg-white dark:bg-[#0c0f18] border-slate-200 dark:border-[#171c2b] text-3xs font-mono z-20">
+        <div className="flex items-center gap-2">
+          {/* Главный тумблер 3D / 2D */}
+          {onSubTabChange && (
+            <div className="inline-flex items-center p-0.5 rounded-md bg-slate-100 dark:bg-[#111422] border border-slate-200 dark:border-[#1e2538]">
+              <button
+                onClick={() => onSubTabChange('3d')}
+                className={`px-2.5 py-0.5 rounded font-semibold transition-all ${
+                  visualSubTab === '3d'
+                    ? 'bg-white dark:bg-[#1c2233] text-sky-600 dark:text-sky-400 shadow-2xs'
+                    : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+                }`}
+              >
+                3D
+              </button>
+              <button
+                onClick={() => onSubTabChange('2d')}
+                className={`px-2.5 py-0.5 rounded font-semibold transition-all ${
+                  visualSubTab === '2d'
+                    ? 'bg-white dark:bg-[#1c2233] text-sky-600 dark:text-sky-400 shadow-2xs'
+                    : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+                }`}
+              >
+                2D
+              </button>
+            </div>
+          )}
+
+          {/* Быстрые ракурсы камеры 3D */}
+          <div className="inline-flex items-center p-0.5 rounded-md bg-slate-100 dark:bg-[#111422] border border-slate-200 dark:border-[#1e2538]">
+            <button
+              onClick={() => setCameraView('iso')}
+              className="px-2 py-0.5 rounded text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-[#1c2233] transition-colors"
+            >
+              {isRu ? 'Изометрия' : 'Iso'}
+            </button>
+            <button
+              onClick={() => setCameraView('top')}
+              className="px-2 py-0.5 rounded text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-[#1c2233] transition-colors"
+            >
+              {isRu ? 'План' : 'Plan'}
+            </button>
+            <button
+              onClick={() => setCameraView('side')}
+              className="px-2 py-0.5 rounded text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-[#1c2233] transition-colors"
+            >
+              {isRu ? 'Разрез' : 'Section'}
+            </button>
+            <button
+              onClick={() => setCameraView('bit')}
+              className="px-2 py-0.5 rounded text-sky-600 dark:text-sky-400 font-semibold hover:bg-slate-100 dark:hover:bg-[#1c2233] transition-colors"
+            >
+              {isRu ? 'Долото' : 'Bit'}
+            </button>
+          </div>
         </div>
 
-        <div className="hidden md:flex items-center gap-1 p-1 rounded-lg border shadow-md pointer-events-auto backdrop-blur-md transition-colors bg-white/90 dark:bg-[#0c0e17]/90 border-slate-200 dark:border-[#171c2b] text-3xs">
-          <span className="text-slate-400 px-1.5 font-medium">{isRu ? 'Ствол:' : 'Caliber:'}</span>
-          <button
-            onClick={() => setThicknessMode('ultra')}
-            className={`px-2 py-0.5 rounded transition-colors ${
-              thicknessMode === 'ultra'
-                ? 'bg-sky-500 text-white font-semibold'
-                : 'text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-[#1a2035]'
-            }`}
-          >
-            {isRu ? 'Тонкий' : 'Slim'}
-          </button>
-          <button
-            onClick={() => setThicknessMode('slim')}
-            className={`px-2 py-0.5 rounded transition-colors ${
-              thicknessMode === 'slim'
-                ? 'bg-sky-500 text-white font-semibold'
-                : 'text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-[#1a2035]'
-            }`}
-          >
-            {isRu ? 'Стандарт' : 'Standard'}
-          </button>
-          <button
-            onClick={() => setThicknessMode('regular')}
-            className={`px-2 py-0.5 rounded transition-colors ${
-              thicknessMode === 'regular'
-                ? 'bg-sky-500 text-white font-semibold'
-                : 'text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-[#1a2035]'
-            }`}
-          >
-            {isRu ? 'Утолщенный' : 'Wide'}
-          </button>
-        </div>
-
-        <div className="relative pointer-events-auto">
+        {/* Выпадающее меню слоев — идентичное положение и размер */}
+        <div className="relative">
           <button
             onClick={() => setShowLayersMenu(!showLayersMenu)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border shadow-md backdrop-blur-md transition-colors bg-white/90 dark:bg-[#0c0e17]/90 border-slate-200 dark:border-[#171c2b] text-slate-700 dark:text-slate-300 text-3xs font-semibold"
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-white dark:bg-[#111422] border border-slate-200 dark:border-[#1e2538] text-slate-700 dark:text-slate-300 text-3xs font-semibold shadow-2xs"
           >
-            <Layers className="w-3 h-3 text-sky-500" />
+            <Layers className="w-3.5 h-3.5 text-sky-500" />
             <span>{isRu ? 'Слои' : 'Layers'}</span>
             <ChevronDown className="w-2.5 h-2.5 opacity-60" />
           </button>
 
           {showLayersMenu && (
-            <div className="absolute top-8 right-0 w-56 p-2.5 rounded-lg border shadow-xl z-30 space-y-2 transition-colors bg-white dark:bg-[#111422] border-slate-200 dark:border-[#20273d] text-3xs font-mono text-slate-700 dark:text-slate-300">
+            <div className="absolute top-8 right-0 w-64 p-2.5 rounded-md border shadow-xl z-30 space-y-2 bg-white dark:bg-[#111422] border-slate-200 dark:border-[#1e2538] text-3xs font-mono text-slate-700 dark:text-slate-300">
+              <div className="text-4xs font-bold uppercase text-slate-400 pb-1 border-b border-slate-100 dark:border-[#1a2030]">
+                {isRu ? 'Траектория' : 'Wellbore'}
+              </div>
+
               <label className="flex items-center gap-2 cursor-pointer hover:text-slate-900 dark:hover:text-white">
                 <input
                   type="checkbox"
@@ -692,7 +903,7 @@ export const Trajectory3D: React.FC = () => {
                   onChange={(e) => setShowCorrected(e.target.checked)}
                   className="rounded-xs accent-sky-500"
                 />
-                <span className="w-2 h-2 rounded-full bg-sky-500 inline-block" />
+                <span className="w-2 h-0.5 bg-sky-500 inline-block" />
                 <span>{isRu ? 'Скорректированный ствол' : 'Corrected Path'}</span>
               </label>
 
@@ -704,7 +915,7 @@ export const Trajectory3D: React.FC = () => {
                   className="rounded-xs accent-sky-600"
                 />
                 <CircleDot className="w-2.5 h-2.5 text-sky-500" />
-                <span>{isRu ? 'Точки замеров (Stations)' : 'Survey Station Points'}</span>
+                <span>{isRu ? 'Точки замеров' : 'Survey Stations'}</span>
               </label>
 
               <label className="flex items-center gap-2 cursor-pointer hover:text-slate-900 dark:hover:text-white">
@@ -714,19 +925,8 @@ export const Trajectory3D: React.FC = () => {
                   onChange={(e) => setShowRaw(e.target.checked)}
                   className="rounded-xs accent-amber-500"
                 />
-                <span className="w-2 h-2 rounded-full bg-amber-500 inline-block" />
-                <span>{isRu ? 'Сырой ствол MWD (исходный)' : 'Raw MWD Path'}</span>
-              </label>
-
-              <label className="flex items-center gap-2 cursor-pointer hover:text-slate-900 dark:hover:text-white">
-                <input
-                  type="checkbox"
-                  checked={showPlanned}
-                  onChange={(e) => setShowPlanned(e.target.checked)}
-                  className="rounded-xs accent-slate-400"
-                />
-                <span className="w-2 h-2 rounded-full bg-slate-400 inline-block" />
-                <span>{isRu ? 'Проектный профиль' : 'Planned Profile'}</span>
+                <span className="w-2 h-0.5 bg-amber-500 inline-block" />
+                <span>{isRu ? 'Сырой ствол MWD' : 'Raw MWD'}</span>
               </label>
 
               <label className="flex items-center gap-2 cursor-pointer hover:text-slate-900 dark:hover:text-white">
@@ -736,7 +936,7 @@ export const Trajectory3D: React.FC = () => {
                   onChange={(e) => setShowOffsets(e.target.checked)}
                   className="rounded-xs accent-purple-500"
                 />
-                <span className="w-2 h-2 rounded-full bg-purple-500 inline-block" />
+                <span className="w-2 h-0.5 bg-purple-500 inline-block" />
                 <span>{isRu ? 'Соседние скважины' : 'Offset Wells'}</span>
               </label>
 
@@ -750,11 +950,49 @@ export const Trajectory3D: React.FC = () => {
                 <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block" />
                 <span>{isRu ? 'Целевой горизонт' : 'Target Payzone'}</span>
               </label>
+
+              <div className="text-4xs font-bold uppercase text-sky-600 dark:text-sky-400 pt-1.5 border-t border-slate-100 dark:border-[#1a2030] flex items-center gap-1">
+                <ShieldAlert className="w-3 h-3 text-sky-500" />
+                <span>{isRu ? 'Неопределенность (1:1)' : 'ISCWSA EOU (1:1)'}</span>
+              </div>
+
+              <label className="flex items-center gap-2 cursor-pointer hover:text-slate-900 dark:hover:text-white">
+                <input
+                  type="checkbox"
+                  checked={showBitEou}
+                  onChange={(e) => setShowBitEou(e.target.checked)}
+                  className="rounded-xs accent-sky-500"
+                />
+                <span>{isRu ? 'Только забой (Bit EOU)' : 'Bit EOU'}</span>
+              </label>
+
+              <label className="flex items-center gap-2 cursor-pointer hover:text-slate-900 dark:hover:text-white">
+                <input
+                  type="checkbox"
+                  checked={showSurveyEou}
+                  onChange={(e) => setShowSurveyEou(e.target.checked)}
+                  className="rounded-xs accent-sky-400"
+                />
+                <span>{isRu ? 'Все замеры (Воронка)' : 'All Stations Funnel'}</span>
+              </label>
+
+              <label className="flex items-center gap-2 cursor-pointer hover:text-slate-900 dark:hover:text-white">
+                <input
+                  type="checkbox"
+                  checked={showAntiCollisionEou}
+                  onChange={(e) => setShowAntiCollisionEou(e.target.checked)}
+                  className="rounded-xs accent-rose-500"
+                />
+                <span className="text-rose-600 dark:text-rose-400 font-semibold">
+                  {isRu ? 'Опасное сближение (SF < 1.5)' : 'Proximity Alert (SF < 1.5)'}
+                </span>
+              </label>
             </div>
           )}
         </div>
       </div>
 
+      {/* Интерактивный 3D-холст (начинается СТРОГО под шапкой h-8) */}
       <div
         ref={containerRef}
         onMouseDown={handleMouseDown}
@@ -770,103 +1008,51 @@ export const Trajectory3D: React.FC = () => {
         <canvas ref={canvasRef} className="w-full h-full block" />
       </div>
 
+      {/* Всплывающая карточка замера */}
       {hovered3DStation && (
         <div
-          className="fixed z-50 pointer-events-none p-3 rounded-lg shadow-2xl text-3xs border bg-white/95 dark:bg-slate-900/95 text-slate-800 dark:text-white border-slate-200 dark:border-slate-700 backdrop-blur-md font-mono min-w-60 transition-transform ease-out"
+          className="fixed z-50 pointer-events-none p-2.5 rounded-md shadow-xl text-3xs border bg-white/95 dark:bg-[#0e111a]/95 text-slate-800 dark:text-white border-slate-200 dark:border-slate-800 backdrop-blur-md font-mono min-w-56"
           style={{
-            left: `${Math.min(window.innerWidth - 270, hovered3DStation.clientX + 16)}px`,
-            top: `${Math.min(window.innerHeight - 240, Math.max(16, hovered3DStation.clientY - 40))}px`,
+            left: `${Math.min(window.innerWidth - 260, hovered3DStation.clientX + 16)}px`,
+            top: `${Math.min(window.innerHeight - 220, Math.max(16, hovered3DStation.clientY - 40))}px`,
           }}
         >
-          <div className="font-bold border-b border-slate-200 dark:border-slate-700 pb-1.5 mb-2 flex items-center justify-between gap-3 text-sky-600 dark:text-sky-400">
-            <span className="flex items-center gap-1.5">
-              <CircleDot className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" />
-              <span>{isRu ? `Точка замера #${hovered3DStation.station.id}` : `Survey Station #${hovered3DStation.station.id}`}</span>
-            </span>
-            <span className="text-slate-600 dark:text-slate-200">
-              MD: <strong className="text-slate-900 dark:text-white">{formatLength(hovered3DStation.station.md, unitSystem)}</strong> {lenUnit}
-            </span>
+          <div className="font-bold border-b border-slate-100 dark:border-slate-800 pb-1 mb-1.5 flex items-center justify-between text-sky-600 dark:text-sky-400">
+            <span>#{hovered3DStation.station.id}</span>
+            <span>MD: {formatLength(hovered3DStation.station.md, unitSystem)} {lenUnit}</span>
           </div>
 
-          <div className="grid grid-cols-2 gap-x-2 gap-y-1 bg-slate-100 dark:bg-slate-800/80 p-1.5 rounded text-slate-700 dark:text-slate-300 mb-2">
-            <div>
-              <span className="text-slate-500 dark:text-slate-400">{isRu ? 'Зенитный (Inc):' : 'Inc:'} </span>
-              <strong className="text-slate-900 dark:text-white">{hovered3DStation.station.inc.toFixed(2)}°</strong>
-            </div>
-            <div>
-              <span className="text-slate-500 dark:text-slate-400">{isRu ? 'Азимут (Azim):' : 'Azim:'} </span>
-              <strong className="text-slate-900 dark:text-white">{hovered3DStation.station.azim.toFixed(2)}°</strong>
-            </div>
-            <div>
-              <span className="text-slate-500 dark:text-slate-400">TVD: </span>
-              <strong className="text-slate-900 dark:text-white">{formatLength(hovered3DStation.station.tvd, unitSystem)} {lenUnit}</strong>
-            </div>
-            <div>
-              <span className="text-slate-500 dark:text-slate-400">DLS: </span>
-              <strong className="text-slate-900 dark:text-white">{hovered3DStation.station.dls.toFixed(2)}°/30{lenUnit}</strong>
-            </div>
+          <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 text-slate-600 dark:text-slate-300 mb-1.5">
+            <div>Inc: <strong className="text-slate-900 dark:text-white">{hovered3DStation.station.inc.toFixed(2)}°</strong></div>
+            <div>Azim: <strong className="text-slate-900 dark:text-white">{hovered3DStation.station.azim.toFixed(2)}°</strong></div>
+            <div>TVD: <strong className="text-slate-900 dark:text-white">{formatLength(hovered3DStation.station.tvd, unitSystem)} {lenUnit}</strong></div>
+            <div>DLS: <strong className="text-slate-900 dark:text-white">{hovered3DStation.station.dls.toFixed(2)}</strong></div>
           </div>
 
-          <div className="space-y-1 text-slate-600 dark:text-slate-300 mb-2">
-            <div className="flex justify-between">
-              <span className="text-slate-500 dark:text-slate-400">{isRu ? 'Север (+N/-S):' : 'Northing (+N/-S):'}</span>
-              <span className="font-semibold text-slate-800 dark:text-slate-200">
-                {formatLength(hovered3DStation.station.northing, unitSystem)} {lenUnit}
-              </span>
+          {hovered3DStation.station.eou && (
+            <div className="p-1 rounded bg-sky-500/10 border border-sky-500/20 text-sky-700 dark:text-sky-300 flex justify-between items-center mb-1">
+              <span>EOU 2σ:</span>
+              <span className="font-bold">±{formatLength(hovered3DStation.station.eou.semiMajor, unitSystem)} {lenUnit}</span>
             </div>
-            <div className="flex justify-between">
-              <span className="text-slate-500 dark:text-slate-400">{isRu ? 'Восток (+E/-W):' : 'Easting (+E/-W):'}</span>
-              <span className="font-semibold text-slate-800 dark:text-slate-200">
-                {formatLength(hovered3DStation.station.easting, unitSystem)} {lenUnit}
-              </span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-slate-500 dark:text-slate-400">{isRu ? 'Вертикальная секция (VS):' : 'Vert. Section (VS):'}</span>
-              <span className="font-semibold text-slate-800 dark:text-slate-200">
-                {formatLength(hovered3DStation.station.vs, unitSystem)} {lenUnit}
-              </span>
-            </div>
-          </div>
+          )}
 
-          <div className="pt-1.5 border-t border-slate-200 dark:border-slate-700/80 grid grid-cols-3 gap-1 text-center text-3xs">
-            <div className="bg-slate-100 dark:bg-slate-800/60 p-1 rounded">
-              <div className="text-slate-500 dark:text-slate-400">Btotal</div>
-              <div className="font-bold text-sky-600 dark:text-sky-400">{hovered3DStation.station.bTotal} nT</div>
-            </div>
-            <div className="bg-slate-100 dark:bg-slate-800/60 p-1 rounded">
-              <div className="text-slate-500 dark:text-slate-400">Gtotal</div>
-              <div className="font-bold text-emerald-600 dark:text-emerald-400">{hovered3DStation.station.gTotal.toFixed(3)} g</div>
-            </div>
-            <div className="bg-slate-100 dark:bg-slate-800/60 p-1 rounded">
-              <div className="text-slate-500 dark:text-slate-400">Dip</div>
-              <div className="font-bold text-indigo-600 dark:text-indigo-400">{hovered3DStation.station.dipAngle.toFixed(2)}°</div>
-            </div>
-          </div>
-
-          <div className="mt-2 pt-1.5 border-t border-slate-200 dark:border-slate-700 flex items-center justify-between">
-            <span className="text-slate-500 dark:text-slate-400">{isRu ? 'Контроль качества (QC):' : 'QC Quality:'}</span>
+          <div className="pt-1 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-4xs">
+            <span className="text-slate-400">QC Status:</span>
             {hovered3DStation.station.isQcPass ? (
-              <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400 font-bold">
-                <CheckCircle2 className="w-3 h-3" />
-                {isRu ? 'В норме' : 'Pass'}
-              </span>
+              <span className="text-emerald-600 dark:text-emerald-400 font-bold">Pass</span>
             ) : (
-              <span className="inline-flex items-center gap-1 text-amber-600 dark:text-amber-400 font-bold">
-                <AlertTriangle className="w-3 h-3" />
-                {isRu ? 'Отклонение QC' : 'Warning'}
-              </span>
+              <span className="text-amber-600 dark:text-amber-400 font-bold">Warning</span>
             )}
           </div>
         </div>
       )}
 
-      {/* Trajectory Depth Clipping Slider */}
-      <div className="h-8 border-t px-3 flex items-center justify-between gap-3 text-3xs font-mono z-10 shrink-0 transition-colors bg-white/90 dark:bg-[#0c0e17]/90 border-slate-200 dark:border-[#171c2b] text-slate-600 dark:text-slate-400">
+      {/* Инженерный скруббер глубины MD */}
+      <div className="h-7 border-t px-3 flex items-center justify-between gap-3 text-3xs font-mono z-10 shrink-0 bg-white/95 dark:bg-[#0c0f18]/95 border-slate-200 dark:border-[#1a2030] text-slate-600 dark:text-slate-400">
         <div className="flex items-center gap-2 shrink-0">
-          <Sliders className="w-3 h-3 text-sky-500" />
-          <span>MD:</span>
-          <span className="text-sky-600 dark:text-sky-400 font-semibold">
-            {formatLength(clipMd, unitSystem)} {unitSystem === 'metric' ? 'm' : 'ft'}
+          <span className="font-semibold text-slate-500">DEPTH:</span>
+          <span className="text-sky-600 dark:text-sky-400 font-bold">
+            {formatLength(clipMd, unitSystem)} {lenUnit}
           </span>
         </div>
 
@@ -877,11 +1063,11 @@ export const Trajectory3D: React.FC = () => {
           step="10"
           value={clipMd}
           onChange={(e) => setClipMd(parseFloat(e.target.value))}
-          className="flex-1 max-w-sm accent-sky-500 h-1 bg-slate-200 dark:bg-slate-700 rounded-lg cursor-pointer"
+          className="flex-1 max-w-md accent-sky-500 h-1 bg-slate-200 dark:bg-slate-700 rounded-lg cursor-pointer"
         />
 
-        <div className="text-3xs text-slate-400 hidden sm:block">
-          {isRu ? 'Наведите на точку замера для данных | ЛКМ: Вращение | ПКМ: Панорамирование | Колесо: Зум' : 'Hover survey point for info | Drag: Orbit | Right-Click: Pan | Wheel: Zoom'}
+        <div className="text-4xs text-slate-400 hidden sm:block">
+          {isRu ? 'ЛКМ: Вращение | ПКМ: Панорама | Колесо: Зум' : 'LMB: Orbit | RMB: Pan | Wheel: Zoom'}
         </div>
       </div>
     </div>

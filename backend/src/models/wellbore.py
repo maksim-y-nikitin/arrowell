@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from typing import List, Optional
 
 from sqlalchemy import String, Float, Integer, Boolean, ForeignKey, Sequence
@@ -95,7 +97,7 @@ class Well(Base, TimestampMixin):
     status: Mapped[str] = mapped_column(String(32), default="active")
     target_formation: Mapped[str] = mapped_column(String(64), default="BV8")
     datum_elevation: Mapped[float] = mapped_column(Float, default=0.0)
-
+    proposal_azimuth: Mapped[float] = mapped_column(Float, default=0.0)
     pad: Mapped["Pad"] = relationship(back_populates="wells")
     stations: Mapped[List["SurveyStation"]] = relationship(
         back_populates="well",

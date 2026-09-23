@@ -7,6 +7,16 @@ export type NodeLevel = 'field' | 'pad' | 'well' | 'run';
 
 export type WellStatus = 'active' | 'warning' | 'completed' | 'planned';
 
+export interface Ellipsoid3D {
+  semiMajor: number;        // Максимальная 3D полуось (м)
+  semiIntermediate: number; // Промежуточная 3D полуось (м)
+  semiMinor: number;        // Минимальная 3D полуось (м)
+  horizMajor: number;       // Полуось горизонтальной проекции (м)
+  horizMinor: number;       // Малая полуось горизонтальной проекции (м)
+  horizAzimuth: number;     // Азимут ориентации эллипса в плане (градусы)
+  eigenvectors?: number[][]; // 3x3 матрица собственных векторов поворота
+}
+
 export interface SurveyRun {
   id: string;
   name: string;
@@ -26,11 +36,11 @@ export interface WellNode {
   padId: string;
   fieldId: string;
   status: WellStatus;
-  uwi: string; // Unique Well Identifier
+  uwi: string;
   slot: string;
   targetFormation: string;
-  datumElevation: number; // RKB elevation (m)
-  groundElevation: number; // GL (m)
+  datumElevation: number;
+  groundElevation: number;
   latitude: number;
   longitude: number;
   runs: SurveyRun[];
@@ -44,7 +54,7 @@ export interface PadNode {
   latitude: number;
   longitude: number;
   groundElevation: number;
-  datum: string; // e.g. MSL or WGS84
+  datum: string;
   wells: WellNode[];
 }
 
@@ -58,45 +68,44 @@ export interface FieldNode {
 }
 
 export interface RawStationSensor {
-  gx: number; // g
-  gy: number; // g
-  gz: number; // g
-  bx: number; // nT
-  by: number; // nT
-  bz: number; // nT
+  gx: number;
+  gy: number;
+  gz: number;
+  bx: number;
+  by: number;
+  bz: number;
 }
 
 export interface SurveyStation {
   id: number;
-  md: number; // Measured Depth (m)
-  inc: number; // Inclination (deg)
-  azim: number; // Azimuth (deg True)
-  tvd: number; // True Vertical Depth (m)
-  northing: number; // +N / -S (m)
-  easting: number; // +E / -W (m)
-  dls: number; // Dogleg Severity (°/30m)
-  vs: number; // Vertical Section (m)
-  closureDist: number; // Closure Distance (m)
-  closureAzim: number; // Closure Azimuth (deg)
+  md: number;
+  inc: number;
+  azim: number;
+  tvd: number;
+  northing: number;
+  easting: number;
+  dls: number;
+  vs: number;
+  closureDist: number;
+  closureAzim: number;
 
-  // Sensors
   sensor: RawStationSensor;
-  gTotal: number; // g (calculated or measured)
-  bTotal: number; // nT (calculated or measured)
-  dipAngle: number; // deg
+  gTotal: number;
+  bTotal: number;
+  dipAngle: number;
 
-  // Quality Control
-  deltaG: number; // gTotal - gRef (1.0000)
-  deltaB: number; // bTotal - bRef (nT)
-  deltaDip: number; // dipAngle - dipRef (deg)
+  deltaG: number;
+  deltaB: number;
+  deltaDip: number;
   isQcPass: boolean;
   qcIssues: string[];
 
-  // Corrections state
   status: 'Raw' | 'MSA Corrected' | 'SAG Applied' | 'SCC Applied' | 'QC Warning';
   appliedCorrections: ('MSA' | 'SAG' | 'SCC')[];
 
-  // Store raw baseline for comparison & diffing
+  // Истинный 3D эллипсоид неопределенности ISCWSA из arrowell_engine
+  eou?: Ellipsoid3D;
+
   rawValues?: {
     inc: number;
     azim: number;
@@ -113,32 +122,32 @@ export interface SurveyStation {
 export interface GeomagneticReference {
   model: 'WMM 2025' | 'IGRF-13' | 'HDGM' | 'BGGM' | 'IFR';
   calcDate: string;
-  bTotalRef: number; // nT (e.g. 52480 nT)
-  dipRef: number; // deg (e.g. 72.15°)
-  declination: number; // deg (e.g. 12.42°)
-  gridConvergence: number; // deg (e.g. 1.25°)
-  gTotalRef: number; // g (1.0000 g)
-  toleranceG: number; // ±0.005 g
-  toleranceB: number; // ±200 nT
-  toleranceDip: number; // ±0.30 deg
+  bTotalRef: number;
+  dipRef: number;
+  declination: number;
+  gridConvergence: number;
+  gTotalRef: number;
+  toleranceG: number;
+  toleranceB: number;
+  toleranceDip: number;
 }
 
 export interface MsaOptimizationResult {
-  collarInterference: number; // nT
-  sensorBiasZ: number; // nT
-  scaleFactorError: number; // %
+  collarInterference: number;
+  sensorBiasZ: number;
+  scaleFactorError: number;
   iterations: number;
   convergenceRms: number;
   correctedStationsCount: number;
 }
 
 export interface BhaConfig {
-  collarOdMm: number;        // Наружный диаметр УБТ (мм), например 171.5 (6-3/4")
-  collarIdMm: number;        // Внутренний диаметр УБТ (мм), например 71.4
-  sensorToBitM: number;      // Расстояние от долота до датчика MWD (м), например 14.5
-  stabilizerDistM: number;   // Расстояние от долота до центратора/стабилизатора (м), например 21.0
-  mudWeightGcm3: number;     // Плотность бурового раствора (г/см³), например 1.20
-  bhaMaterial: 'nm_steel' | 'steel'; // Материал: немагнитная или углеродистая сталь
+  collarOdMm: number;
+  collarIdMm: number;
+  sensorToBitM: number;
+  stabilizerDistM: number;
+  mudWeightGcm3: number;
+  bhaMaterial: 'nm_steel' | 'steel';
 }
 
 export interface WellPropertiesUpdate {
@@ -149,7 +158,7 @@ export interface WellPropertiesUpdate {
   datum?: string;
   wellName?: string;
   slot?: string;
-  datumElevation?: number; // RKB
+  datumElevation?: number;
   targetFormation?: string;
 }
 
@@ -169,6 +178,8 @@ export interface AntiCollisionPoint {
   isViolation: boolean;
   status: 'safe' | 'warning' | 'critical';
   warningLevel: string;
+  subject_eou?: Ellipsoid3D;
+  offset_eou?: Ellipsoid3D;
 }
 
 export interface AntiCollisionScanResponse {
@@ -193,5 +204,7 @@ export interface AntiCollisionScanResponse {
     separation_factor: number;
     is_violation: boolean;
     warning_level: string;
+    subject_eou?: Ellipsoid3D;
+    offset_eou?: Ellipsoid3D;
   }[];
 }

@@ -1,7 +1,3 @@
-/**
- * Global Zustand workstation store orchestrating UI, engineering, and survey telemetry domains.
- */
-
 import { create } from 'zustand';
 import { devtools, persist } from 'zustand/middleware';
 import {
@@ -12,6 +8,7 @@ import {
   SurveyRun,
   GeomagneticReference,
   BhaConfig,
+  MsaConfig,
   MsaOptimizationResult,
   UnitSystem,
   Language,
@@ -21,7 +18,7 @@ import {
 } from '@/types';
 import { translations, TranslationKey } from '@/utils/i18n';
 import { initialGeoRef, initialSurveyStations, mockHierarchy, wellStationsMap } from '@/data/wellsData';
-import { calculateMinimumCurvature, evaluateSurveyQC } from '@/utils/directionalMath';
+import { calculateMinimumCurvature } from '@/utils/directionalMath';
 import { runMultiStationAnalysis } from '@/utils/geomagneticEngine';
 import {
   ApiStation,
@@ -34,7 +31,6 @@ import {
 } from '@/utils/api';
 import { initialBhaConfig, calculatePhysicalSagAngle } from '@/utils/directionalMath';
 
-// Well-specific proposal azimuth mapping to preserve vertical section projections
 const wellProposalAzimuthMap: Record<string, number> = {
   'well-102h': 55.0,
   'well-104b': 133.0,
@@ -46,6 +42,12 @@ export interface NotificationState {
   type: 'info' | 'success' | 'warning' | 'error';
 }
 
+/**
+ * Maps raw backend API survey station schema to typed internal application state.
+ *
+ * @param s - Raw station data from backend API response.
+ * @returns Normalized SurveyStation structure.
+ */
 function mapApiStationToLocal(s: ApiStation): SurveyStation {
   return {
     id: s.id,
@@ -70,6 +72,17 @@ function mapApiStationToLocal(s: ApiStation): SurveyStation {
     qcIssues: s.is_qc_pass ? [] : ['Out of spec'],
     status: s.status as any,
     appliedCorrections: [],
+    eou: s.eou
+      ? {
+          semiMajor: s.eou.semi_major,
+          semiIntermediate: s.eou.semi_intermediate,
+          semiMinor: s.eou.semi_minor,
+          horizMajor: s.eou.horiz_semi_major,
+          horizMinor: s.eou.horiz_semi_minor,
+          horizAzimuth: s.eou.horiz_azimuth,
+          eigenvectors: s.eou.eigenvectors,
+        }
+      : undefined,
     rawValues: {
       inc: s.inc,
       azim: s.azim,
@@ -85,7 +98,6 @@ function mapApiStationToLocal(s: ApiStation): SurveyStation {
 }
 
 interface WellboreStoreState {
-  // UI Domain
   unitSystem: UnitSystem;
   language: Language;
   theme: Theme;
@@ -93,11 +105,10 @@ interface WellboreStoreState {
   showDeltaDiff: boolean;
   notification: NotificationState | null;
 
-  // Engineering Domain
   geoRef: GeomagneticReference;
   bhaConfig: BhaConfig;
+  msaConfig: MsaConfig;
 
-  // Survey Domain
   fields: FieldNode[];
   activeWellId: string;
   stations: SurveyStation[];
@@ -111,14 +122,12 @@ interface WellboreStoreState {
   cachedMsaBz: number;
   mwdcoreSagMap: Record<number, number>;
 
-  // Computed Getters
   getActiveField: () => FieldNode;
   getActivePad: () => PadNode;
   getActiveWell: () => WellNode;
   getActiveRun: () => SurveyRun;
   getActiveProposalAzimuth: () => number;
 
-  // Trajectory Recalculation Engine
   applyCombinedCorrections: (
     azimMode: 'none' | 'msa' | 'scc',
     sagActive: boolean,
@@ -127,7 +136,6 @@ interface WellboreStoreState {
     currentBha?: BhaConfig
   ) => void;
 
-  // Actions: UI
   setUnitSystem: (u: UnitSystem) => void;
   setLanguage: (l: Language) => void;
   setTheme: (t: Theme) => void;
@@ -138,11 +146,10 @@ interface WellboreStoreState {
   dismissNotification: () => void;
   t: (key: TranslationKey) => string;
 
-  // Actions: Engineering
   updateGeoRef: (partial: Partial<GeomagneticReference>) => void;
   updateBhaConfig: (partial: Partial<BhaConfig>) => void;
+  updateMsaConfig: (partial: Partial<MsaConfig>) => void;
 
-  // Actions: Surveys & Telemetry
   initWorkstation: () => Promise<void>;
   setActiveWellById: (wellId: string) => void;
   setSelectedStationId: (id: number | null) => void;
@@ -160,7 +167,6 @@ export const useWellboreStore = create<WellboreStoreState>()(
   devtools(
     persist(
       (set, get) => ({
-        // Initial UI State
         unitSystem: 'metric',
         language: 'ru',
         theme: 'dark',
@@ -168,11 +174,16 @@ export const useWellboreStore = create<WellboreStoreState>()(
         showDeltaDiff: true,
         notification: null,
 
-        // Initial Engineering State
         geoRef: initialGeoRef,
         bhaConfig: initialBhaConfig,
+        msaConfig: {
+          method: 'trf',
+          maxIter: 50,
+          popsize: 15,
+          enableMisalignment: true,
+          enableRefCorrections: true,
+        },
 
-        // Initial Survey State
         fields: mockHierarchy,
         activeWellId: 'well-102h',
         stations: initialSurveyStations,
@@ -186,7 +197,6 @@ export const useWellboreStore = create<WellboreStoreState>()(
         cachedMsaBz: 280,
         mwdcoreSagMap: {},
 
-        // Computed Getters
         getActiveField: () => {
           const { fields, activeWellId } = get();
           for (const f of fields) {
@@ -237,7 +247,6 @@ export const useWellboreStore = create<WellboreStoreState>()(
           return wellProposalAzimuthMap[activeWellId] ?? 55.0;
         },
 
-        // Core Calculation Engine: Cascades physical corrections to survey stations
         applyCombinedCorrections: (
           azimMode,
           sagActive,
@@ -258,12 +267,15 @@ export const useWellboreStore = create<WellboreStoreState>()(
             let azim = raw.azim;
             let bTotal = raw.bTotal;
             let deltaB = raw.deltaB;
+            let dipAngle = raw.dipAngle;
+            let deltaDip = raw.deltaDip;
 
-            // Apply magnetic drillstring interference correction (MSA)
-            if (azimMode === 'msa' && raw.md >= 1000) {
-              const correctedBz = raw.sensor.bz - msaBz;
-              bTotal = Math.round(Math.hypot(raw.sensor.bx, raw.sensor.by, correctedBz));
-              deltaB = Math.round(bTotal - geoRef.bTotalRef);
+            let correctedBz = raw.sensor.bz;
+            let isMagCorrected = false;
+
+            if (azimMode === 'msa') {
+              correctedBz = raw.sensor.bz - msaBz;
+              isMagCorrected = true;
 
               const incRad = (raw.inc * Math.PI) / 180;
               const azShift =
@@ -271,13 +283,39 @@ export const useWellboreStore = create<WellboreStoreState>()(
                   ? (msaBz / (geoRef.bTotalRef * Math.sin(incRad))) * (180 / Math.PI) * 0.28
                   : 0;
               azim = Number(((raw.azim - azShift + 360) % 360).toFixed(2));
-            } else if (azimMode === 'scc' && raw.bTotal > geoRef.bTotalRef + geoRef.toleranceB) {
-              bTotal = geoRef.bTotalRef + 35;
-              deltaB = 35;
-              azim = Number(((raw.azim - 0.45 + 360) % 360).toFixed(2));
+            } else if (azimMode === 'scc') {
+              const bXySq = raw.sensor.bx * raw.sensor.bx + raw.sensor.by * raw.sensor.by;
+              const bRefSq = geoRef.bTotalRef * geoRef.bTotalRef;
+              const diff = Math.max(0, bRefSq - bXySq);
+              const sign = raw.sensor.bz >= 0 ? 1 : -1;
+              correctedBz = sign * Math.sqrt(diff);
+              isMagCorrected = true;
+
+              const gTot = raw.gTotal || 1.0;
+              const ew = (raw.sensor.gx * raw.sensor.by - raw.sensor.gy * raw.sensor.bx) * gTot;
+              const ns =
+                correctedBz * (raw.sensor.gx * raw.sensor.gx + raw.sensor.gy * raw.sensor.gy) -
+                raw.sensor.gz * (raw.sensor.gx * raw.sensor.bx + raw.sensor.gy * raw.sensor.by);
+              const rawMagAzim = ((Math.atan2(ew, ns) * 180) / Math.PI + 360) % 360;
+              const magGridShift = geoRef.declination - geoRef.gridConvergence;
+              azim = Number(((rawMagAzim + magGridShift + 360) % 360).toFixed(2));
             }
 
-            // Apply gravity beam deflection correction (SAG)
+            if (isMagCorrected) {
+              bTotal = Math.round(Math.hypot(raw.sensor.bx, raw.sensor.by, correctedBz));
+              deltaB = Math.round(bTotal - geoRef.bTotalRef);
+
+              const gTot = raw.gTotal || 1.0;
+              const dotGb =
+                (raw.sensor.gx * raw.sensor.bx +
+                  raw.sensor.gy * raw.sensor.by +
+                  raw.sensor.gz * correctedBz) /
+                (gTot * bTotal || 1.0);
+              const safeDot = Math.max(-1.0, Math.min(1.0, dotGb));
+              dipAngle = Number(((Math.asin(safeDot) * 180) / Math.PI).toFixed(2));
+              deltaDip = Number((dipAngle - geoRef.dipRef).toFixed(2));
+            }
+
             if (sagActive) {
               const sagDeg =
                 sagMap[raw.id] !== undefined
@@ -286,12 +324,21 @@ export const useWellboreStore = create<WellboreStoreState>()(
               inc = Number((raw.inc - sagDeg).toFixed(2));
             }
 
+            const isQcPass =
+              Math.abs(deltaB) <= geoRef.toleranceB &&
+              Math.abs(deltaDip) <= geoRef.toleranceDip &&
+              Math.abs(raw.deltaG) <= geoRef.toleranceG;
+
             return {
               ...raw,
               inc,
               azim,
               bTotal,
               deltaB,
+              dipAngle,
+              deltaDip,
+              isQcPass,
+              qcIssues: isQcPass ? [] : ['Out of tolerance'],
               appliedCorrections: [...activeCorrectionsList],
               status:
                 activeCorrectionsList.length > 0
@@ -305,7 +352,6 @@ export const useWellboreStore = create<WellboreStoreState>()(
           });
         },
 
-        // UI Actions
         setUnitSystem: (unitSystem) => set({ unitSystem }),
 
         setLanguage: (language) => set({ language }),
@@ -350,7 +396,6 @@ export const useWellboreStore = create<WellboreStoreState>()(
           return dict[key] || translations.en[key] || key;
         },
 
-        // Engineering Actions
         updateGeoRef: (partial) =>
           set((state) => ({ geoRef: { ...state.geoRef, ...partial } })),
 
@@ -374,7 +419,11 @@ export const useWellboreStore = create<WellboreStoreState>()(
           }
         },
 
-        // Survey Actions
+        updateMsaConfig: (partial) =>
+          set((state) => ({
+            msaConfig: { ...state.msaConfig, ...partial },
+          })),
+
         initWorkstation: async () => {
           try {
             const remoteHierarchy = await fetchHierarchy();
@@ -483,7 +532,17 @@ export const useWellboreStore = create<WellboreStoreState>()(
         },
 
         runMSA: async () => {
-          const { azimuthCorrection, isSagEnabled, activeWellId, rawStations, geoRef, language, notify, applyCombinedCorrections } = get();
+          const {
+            azimuthCorrection,
+            isSagEnabled,
+            activeWellId,
+            rawStations,
+            geoRef,
+            msaConfig,
+            language,
+            notify,
+            applyCombinedCorrections,
+          } = get();
 
           if (azimuthCorrection === 'msa') {
             set({ azimuthCorrection: 'none' });
@@ -494,7 +553,13 @@ export const useWellboreStore = create<WellboreStoreState>()(
 
           set({ isCalculatingMSA: true });
           try {
-            const res = await triggerMsaAnalysis(activeWellId);
+            const res = await triggerMsaAnalysis(activeWellId, {
+              method: msaConfig.method,
+              max_iter: msaConfig.maxIter,
+              popsize: msaConfig.popsize,
+              enable_misalignment: msaConfig.enableMisalignment,
+              enable_ref_corrections: msaConfig.enableRefCorrections,
+            });
             const bz = res.axial_bias_bz;
             set({
               cachedMsaBz: bz,
@@ -502,7 +567,7 @@ export const useWellboreStore = create<WellboreStoreState>()(
                 collarInterference: Math.round(bz),
                 sensorBiasZ: bz,
                 scaleFactorError: res.scale_factor_z,
-                iterations: 60,
+                iterations: res.iterations || 50,
                 convergenceRms: 0.12,
                 correctedStationsCount: res.stations_analyzed,
               },
@@ -514,8 +579,8 @@ export const useWellboreStore = create<WellboreStoreState>()(
 
             notify(
               language === 'ru'
-                ? `MSA включен (mwdstdcore): ΔBz = ${bz} нТл (${res.stations_analyzed} замеров)`
-                : `MSA active (mwdstdcore): ΔBz = ${bz} nT (${res.stations_analyzed} stations)`,
+                ? `MSA (${msaConfig.method.toUpperCase()}): ΔBz = ${bz} нТл (${res.stations_analyzed} замеров)`
+                : `MSA (${msaConfig.method.toUpperCase()}): ΔBz = ${bz} nT (${res.stations_analyzed} stations)`,
               'success'
             );
           } catch (err) {
@@ -539,7 +604,16 @@ export const useWellboreStore = create<WellboreStoreState>()(
         },
 
         runSAG: async () => {
-          const { isSagEnabled, activeWellId, bhaConfig, azimuthCorrection, cachedMsaBz, language, notify, applyCombinedCorrections } = get();
+          const {
+            isSagEnabled,
+            activeWellId,
+            bhaConfig,
+            azimuthCorrection,
+            cachedMsaBz,
+            language,
+            notify,
+            applyCombinedCorrections,
+          } = get();
 
           if (isSagEnabled) {
             set({ isSagEnabled: false });
@@ -566,8 +640,8 @@ export const useWellboreStore = create<WellboreStoreState>()(
 
             notify(
               language === 'ru'
-                ? `SAG рассчитан через mwdstdcore (пик: ${res.peak_sag_deg}°, точек: ${res.stations_corrected})`
-                : `SAG computed via mwdstdcore (peak: ${res.peak_sag_deg}°, stations: ${res.stations_corrected})`,
+                ? `SAG рассчитан через arrowell_engine (пик: ${res.peak_sag_deg}°, точек: ${res.stations_corrected})`
+                : `SAG computed via arrowell_engine (peak: ${res.peak_sag_deg}°, stations: ${res.stations_corrected})`,
               'success'
             );
           } catch (err) {
@@ -727,6 +801,7 @@ export const useWellboreStore = create<WellboreStoreState>()(
           language: state.language,
           theme: state.theme,
           viewMode: state.viewMode,
+          msaConfig: state.msaConfig,
         }),
       }
     ),

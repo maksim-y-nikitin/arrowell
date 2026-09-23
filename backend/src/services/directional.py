@@ -21,6 +21,7 @@ from arrowell_engine.sag.beam import (
     StabilizerBlade,
     calculate_bha_sag,
 )
+from arrowell_engine.sensors.models import apply_sensor_correction
 from arrowell_engine.sensors.transforms import compute_survey_metrics
 from arrowell_engine.trajectory.mcm import calculate_mcm_trajectory
 from arrowell_engine.trajectory.uncertainty import (
@@ -33,6 +34,7 @@ from schemas.survey import (
     AntiCollisionPointOutput,
     AntiCollisionScanResponse,
     BhaConfigSchema,
+    EouResponseSchema,
     OffsetStationInput,
     RawStationSensorSchema,
     SagCalculationResponse,
@@ -87,22 +89,7 @@ def calculate_trajectory_mwdcore(
     well_id: str = "well-active",
     model_name: str = "WMM",
 ) -> TrajectoryCalculationResponse:
-    """Calculate 3D wellbore trajectory and QA/QC flags using vectorized MCM.
-
-    Args:
-        stations: Input survey stations.
-        proposal_azimuth: Direction of vertical section proposal plane (deg).
-        declination_deg: Magnetic declination angle (deg).
-        grid_convergence_deg: Meridian grid convergence angle (deg).
-        b_total_ref: Geomagnetic total field reference in nT.
-        dip_ref_deg: Geomagnetic dip angle reference in degrees.
-        g_total_ref: Normal gravity reference value in g (default 1.0000).
-        well_id: Well identifier key.
-        model_name: Geomagnetic model family key.
-
-    Returns:
-        TrajectoryCalculationResponse with calculated stations and QC labels.
-    """
+    """Calculate 3D wellbore trajectory, QC flags, and ISCWSA 3D uncertainty envelopes."""
     if not stations:
         return TrajectoryCalculationResponse(
             station_count=0, total_md=0.0, total_tvd=0.0, max_dls=0.0, stations=[]
@@ -133,7 +120,6 @@ def calculate_trajectory_mwdcore(
             sensor_rows.append([s_obj.gx, s_obj.gy, s_obj.gz, s_obj.bx, s_obj.by, s_obj.bz])
             has_real_sensors.append(True)
         else:
-            # Synthesize forward projection matching the station's actual Inc/Azim
             synth = _synthesize_forward_sensors(
                 inc_deg=s.inc,
                 azim_deg=s.azim,
@@ -159,7 +145,6 @@ def calculate_trajectory_mwdcore(
         vertical_azimuth_lock=0.0,
     )
 
-    # Total magnetic-to-grid correction angle (Declination - Grid Convergence)
     mag_grid_correction_deg = declination_deg - grid_convergence_deg
 
     # 3. Resolve QC boundaries
@@ -175,7 +160,6 @@ def calculate_trajectory_mwdcore(
         b_tot = round(float(metrics.b_total[i]), 1)
         dip_angle = round(float(metrics.dip_deg[i]), 2)
 
-        # Compute sensor-derived grid azimuth
         sensor_grid_azim = (float(metrics.azim_mag_deg[i]) + mag_grid_correction_deg) % 360.0
 
         delta_g = round(g_tot - g_total_ref, 4)
@@ -194,7 +178,6 @@ def calculate_trajectory_mwdcore(
 
         status_label = qc_eval.status_label
 
-        # Only evaluate azimuth discrepancy if real sensor telemetry was provided and well is deviated
         if has_real_sensors[i] and qc_eval.is_overall_pass and curr.inc >= 3.0:
             az_diff = abs((curr.azim - sensor_grid_azim + 180.0) % 360.0 - 180.0)
             if az_diff > 2.0:
@@ -237,6 +220,30 @@ def calculate_trajectory_mwdcore(
             )
         )
 
+    # 4. Rigorous ISCWSA 3D Ellipsoid of Uncertainty (EOU) calculation via arrowell_engine
+    if len(calculated_stations) >= 2:
+        try:
+            eou_list = calculate_uncertainty_mwdcore(
+                stations=calculated_stations,
+                b_total_ref=b_total_ref,
+                dip_ref_deg=dip_ref_deg,
+                declination_deg=declination_deg,
+                model_name="ISCWSA_MWD_REV4",
+                expansion_k=2.0,  # 2-sigma 95.4%
+            )
+            for stn_resp, eou in zip(calculated_stations, eou_list):
+                stn_resp.eou = EouResponseSchema(
+                    semi_major=eou.semi_major_m,
+                    semi_intermediate=eou.semi_intermediate_m,
+                    semi_minor=eou.semi_minor_m,
+                    horiz_semi_major=eou.horiz_semi_major_m,
+                    horiz_semi_minor=eou.horiz_semi_minor_m,
+                    horiz_azimuth=eou.horiz_azimuth_deg,
+                    eigenvectors=eou.eigenvectors.tolist(),
+                )
+        except Exception:
+            pass
+
     last_stn = calculated_stations[-1]
     max_dls_val = round(float(np.max(traj.dls)), 2)
 
@@ -251,66 +258,107 @@ def calculate_trajectory_mwdcore(
 
 def run_msa_mwdcore(
     stations: List[SurveyStationResponse],
+    b_total_ref: float = 52480.0,
+    dip_ref_deg: float = 72.15,
+    g_total_ref: float = 1.0000,
+    declination_deg: float = 12.42,
+    grid_convergence_deg: float = 1.25,
     geomag_model: str = "WMM",
-    dec_deg: float = 12.42,
-    grid_deg: float = 1.25,
+    method: str = "trf",
+    max_iter: int = 50,
+    popsize: int = 15,
+    enable_misalignment: bool = True,
+    enable_ref_corrections: bool = True,
 ) -> Dict[str, Any]:
-    """Execute Multi-Station Analysis (MSA) using parallel SciPy Differential Evolution."""
-    msa_stations = [s for s in stations if s.inc >= 3.0]
-    if len(msa_stations) < 4:
-        msa_stations = stations[-6:] if len(stations) >= 6 else stations
+    """
+    Execute Multi-Station Analysis calibration with user-defined optimization solver options.
 
-    if len(msa_stations) < 4:
-        raise ValueError("At least 4 valid survey stations are required for MSA convergence.")
+    Args:
+        stations: Complete list of directional survey stations for the wellbore.
+        b_total_ref: Reference magnetic field magnitude in nanoTesla.
+        dip_ref_deg: Reference magnetic dip angle in degrees.
+        g_total_ref: Reference total gravity magnitude in g units.
+        declination_deg: Magnetic declination angle in degrees.
+        grid_convergence_deg: Grid convergence angle in degrees.
+        geomag_model: Identification string of the geomagnetic reference model.
+        method: Optimization algorithm identifier ('trf' or 'de').
+        max_iter: Maximum iterations or generation budget.
+        popsize: Differential evolution population size multiplier.
+        enable_misalignment: Whether to solve for cross-axis misalignment terms.
+        enable_ref_corrections: Whether to solve for reference field residual deltas.
 
-    raw_dni = np.array([
+    Returns:
+        Dictionary containing solver status, correction deltas, and calibrated stations.
+    """
+    all_raw_dni = np.array([
         [
             s.sensor.gx, s.sensor.gy, s.sensor.gz,
             s.sensor.bx, s.sensor.by, s.sensor.bz,
         ]
-        for s in msa_stations
+        for s in stations
     ], dtype=np.float64)
+
+    msa_mask = np.array([s.inc >= 3.0 for s in stations], dtype=bool)
+    if np.count_nonzero(msa_mask) < 4:
+        msa_mask = np.ones(len(stations), dtype=bool)
+
+    solving_dni = all_raw_dni[msa_mask]
 
     try:
         family = ModelFamily(geomag_model.upper())
     except ValueError:
         family = ModelFamily.WMM
 
-    avg_b_ref = float(np.mean([s.b_total for s in msa_stations]))
-    avg_dip_ref = float(np.mean([s.dip_angle for s in msa_stations]))
-
-    # Run global optimization
     result = run_msa_optimization(
-        raw_dni=raw_dni,
-        g_ref=1.0000,
-        b_ref=avg_b_ref,
-        dip_ref_deg=avg_dip_ref,
-        enable_misalignment=True,
+        raw_dni=solving_dni,
+        g_ref=g_total_ref,
+        b_ref=b_total_ref,
+        dip_ref_deg=dip_ref_deg,
+        enable_misalignment=enable_misalignment,
+        enable_ref_corrections=enable_ref_corrections,
+        method=method,
+        max_iter=max_iter,
+        popsize=popsize,
     )
 
-    total_mag_correction = dec_deg - grid_deg
+    all_corrected_dni = apply_sensor_correction(all_raw_dni, result.params.to_array())
+
+    total_mag_correction = declination_deg - grid_convergence_deg
 
     raw_metrics = compute_survey_metrics(
-        raw_dni[:, 0], raw_dni[:, 1], raw_dni[:, 2],
-        raw_dni[:, 3], raw_dni[:, 4], raw_dni[:, 5],
+        all_raw_dni[:, 0], all_raw_dni[:, 1], all_raw_dni[:, 2],
+        all_raw_dni[:, 3], all_raw_dni[:, 4], all_raw_dni[:, 5],
     )
-    raw_grid_azims = (raw_metrics.azim_mag_deg + total_mag_correction) % 360.0
-
-    cor = result.corrected_surveys
     cor_metrics = compute_survey_metrics(
-        cor[:, 0], cor[:, 1], cor[:, 2],
-        cor[:, 3], cor[:, 4], cor[:, 5],
+        all_corrected_dni[:, 0], all_corrected_dni[:, 1], all_corrected_dni[:, 2],
+        all_corrected_dni[:, 3], all_corrected_dni[:, 4], all_corrected_dni[:, 5],
     )
+
+    raw_grid_azims = (raw_metrics.azim_mag_deg + total_mag_correction) % 360.0
     cor_grid_azims = (cor_metrics.azim_mag_deg + total_mag_correction) % 360.0
 
     az_shifts = (cor_grid_azims - raw_grid_azims + 180.0) % 360.0 - 180.0
-    mean_az_shift = round(float(np.mean(az_shifts)), 2)
+    mean_az_shift = round(float(np.mean(az_shifts[msa_mask])), 2)
 
     is_success = bool(result.success or (result.cost < 50.0))
+
+    corrected_station_payloads = []
+    for i, s in enumerate(stations):
+        corrected_station_payloads.append({
+            "id": s.id,
+            "md": s.md,
+            "b_total_raw": round(float(raw_metrics.b_total[i]), 1),
+            "b_total_cor": round(float(cor_metrics.b_total[i]), 1),
+            "dip_raw": round(float(raw_metrics.dip_deg[i]), 2),
+            "dip_cor": round(float(cor_metrics.dip_deg[i]), 2),
+            "azim_raw": round(float(raw_grid_azims[i]), 2),
+            "azim_cor": round(float(cor_grid_azims[i]), 2),
+        })
 
     return {
         "status": "success" if is_success else "warning",
         "geomag_model": family.value,
+        "solver_method": str(method).upper(),
         "azimuth_correction_deg": mean_az_shift,
         "delta_b_ref_nt": result.ref_corrections.delta_b,
         "delta_dip_ref_deg": result.ref_corrections.delta_dip,
@@ -319,8 +367,9 @@ def run_msa_mwdcore(
         "cross_bias_by": round(float(result.params.mby), 2),
         "scale_factor_z": round(float(result.params.msz), 5),
         "misalignment_mxy": round(float(result.params.mxy), 5),
-        "stations_analyzed": len(msa_stations),
+        "stations_analyzed": int(np.count_nonzero(msa_mask)),
         "iterations": result.iterations,
+        "corrected_stations": corrected_station_payloads,
         "quality_assessment": {
             "accuracy": is_success,
             "cost": round(result.cost, 3),
@@ -328,7 +377,6 @@ def run_msa_mwdcore(
             "reference": True,
         },
     }
-
 
 def build_bha_assembly(config: BhaConfigSchema) -> Tuple[List[BhaComponent], List[StabilizerBlade], float]:
     """Translate engineering schema parameters into physical beam elements."""
@@ -346,10 +394,8 @@ def build_bha_assembly(config: BhaConfigSchema) -> Tuple[List[BhaComponent], Lis
     bit_id = 0.05
 
     bit_elem = BhaComponent(od_m=bit_od, id_m=bit_id, length_m=bit_len, material=ComponentMaterial.STEEL)
-
     collar1_len = max(1.0, config.stabilizer_dist_m - bit_len)
     collar1_elem = BhaComponent(od_m=od_m, id_m=id_m, length_m=collar1_len, material=material)
-
     collar2_len = max(5.0, total_len - (bit_len + collar1_len))
     collar2_elem = BhaComponent(od_m=od_m, id_m=id_m, length_m=collar2_len, material=ComponentMaterial.STEEL)
 
@@ -479,6 +525,7 @@ def calculate_anticollision_mwdcore(
         expansion_k=expansion_k,
     )
 
+
 def run_anticollision_mwdcore(
     subject_stations: List[SurveyStationResponse],
     offset_stations: List[OffsetStationInput],
@@ -492,24 +539,7 @@ def run_anticollision_mwdcore(
     dip_ref_deg: float = 72.15,
     declination_deg: float = 12.42,
 ) -> AntiCollisionScanResponse:
-    """Execute high-precision 3D Anti-Collision clearance scan using ISCWSA error propagation.
-
-    Args:
-        subject_stations: Calculated stations of the active drilling wellbore.
-        offset_stations: Input coordinates of the offset well.
-        offset_well_name: Identifier name of the offset well.
-        well_id: Active well identifier.
-        model_name: ISCWSA tool error model key (default 'ISCWSA_MWD_REV4').
-        expansion_k: Confidence coverage multiplier (default 2.0 for 2-sigma).
-        well_radius_subject_m: Subject wellbore radius in meters.
-        well_radius_offset_m: Offset wellbore radius in meters.
-        b_total_ref: Geomagnetic total field reference in nT.
-        dip_ref_deg: Geomagnetic dip angle reference in degrees.
-        declination_deg: Magnetic declination in degrees.
-
-    Returns:
-        AntiCollisionScanResponse with clearance geometry, EOU envelopes, and SF.
-    """
+    """Execute high-precision 3D Anti-Collision clearance scan using ISCWSA error propagation."""
     if len(subject_stations) < 2 or len(offset_stations) < 2:
         return AntiCollisionScanResponse(
             status="empty",
@@ -531,20 +561,27 @@ def run_anticollision_mwdcore(
         expansion_k=expansion_k,
     )
 
-    # 2. Offset well trajectory and EOU
-    offset_bases = [
-        SurveyStationBase(md=s.md, inc=s.inc or 0.0, azim=s.azim or 0.0)
-        for s in offset_stations
-    ]
-    offset_traj = calculate_trajectory_mwdcore(
-        stations=offset_bases,
-        declination_deg=declination_deg,
-        b_total_ref=b_total_ref,
-        dip_ref_deg=dip_ref_deg,
-        well_id="offset-temp",
-    )
+    # 2. Используем РЕАЛЬНЫЕ координаты соседней скважины (без сброса в 0, 0, 0)
+    # Преобразуем входные точки соседа в объекты станций с сохранением Northing/Easting/TVD
+    offset_station_responses: List[SurveyStationResponse] = []
+    for idx, s in enumerate(offset_stations):
+        offset_station_responses.append(
+            SurveyStationResponse(
+                id=idx + 1,
+                well_id="offset-well",
+                md=s.md,
+                inc=s.inc or 0.0,
+                azim=s.azim or 0.0,
+                tvd=s.tvd,
+                northing=s.northing,
+                easting=s.easting,
+                sensor=RawStationSensorSchema(gx=0, gy=0, gz=1, bx=16000, by=0, bz=50000),
+            )
+        )
+
+    # Считаем EOU для соседа по его честной траектории
     offset_eou = calculate_uncertainty_mwdcore(
-        stations=offset_traj.stations,
+        stations=offset_station_responses,
         b_total_ref=b_total_ref,
         dip_ref_deg=dip_ref_deg,
         declination_deg=declination_deg,
@@ -564,9 +601,11 @@ def run_anticollision_mwdcore(
         s_cov = subj_eou[i].covariance_nev
         best_sf_res = None
         best_off_stn = None
+        best_j = -1
         current_min_d = float("inf")
 
-        for j, o_stn in enumerate(offset_traj.stations):
+        # Ищем минимальное расстояние до ЧЕСТНЫХ координат сохода
+        for j, o_stn in enumerate(offset_station_responses):
             if j >= len(offset_eou):
                 continue
             dist = math.hypot(
@@ -577,6 +616,7 @@ def run_anticollision_mwdcore(
             if dist < current_min_d:
                 current_min_d = dist
                 best_off_stn = o_stn
+                best_j = j
                 o_cov = offset_eou[j].covariance_nev
                 best_sf_res = calculate_anticollision_mwdcore(
                     subject_station=s_stn,
@@ -588,12 +628,15 @@ def run_anticollision_mwdcore(
                     expansion_k=expansion_k,
                 )
 
-        if best_sf_res and best_off_stn:
+        if best_sf_res and best_off_stn and best_j >= 0:
             if best_sf_res.separation_factor < min_sf:
                 min_sf = best_sf_res.separation_factor
             if best_sf_res.center_distance_m < min_dist:
                 min_dist = best_sf_res.center_distance_m
                 min_dist_md = s_stn.md
+
+            s_eou = subj_eou[i]
+            o_eou = offset_eou[best_j]
 
             scan_points.append(
                 AntiCollisionPointOutput(
@@ -611,6 +654,24 @@ def run_anticollision_mwdcore(
                     separation_factor=best_sf_res.separation_factor,
                     is_violation=best_sf_res.is_violation,
                     warning_level=best_sf_res.warning_level,
+                    subject_eou=EouResponseSchema(
+                        semi_major=s_eou.semi_major_m,
+                        semi_intermediate=s_eou.semi_intermediate_m,
+                        semi_minor=s_eou.semi_minor_m,
+                        horiz_semi_major=s_eou.horiz_semi_major_m,
+                        horiz_semi_minor=s_eou.horiz_semi_minor_m,
+                        horiz_azimuth=s_eou.horiz_azimuth_deg,
+                        eigenvectors=s_eou.eigenvectors.tolist(),
+                    ),
+                    offset_eou=EouResponseSchema(
+                        semi_major=o_eou.semi_major_m,
+                        semi_intermediate=o_eou.semi_intermediate_m,
+                        semi_minor=o_eou.semi_minor_m,
+                        horiz_semi_major=o_eou.horiz_semi_major_m,
+                        horiz_semi_minor=o_eou.horiz_semi_minor_m,
+                        horiz_azimuth=o_eou.horiz_azimuth_deg,
+                        eigenvectors=o_eou.eigenvectors.tolist(),
+                    ),
                 )
             )
 

@@ -1,4 +1,7 @@
-"""Pydantic schemas for directional survey stations and sensor telemetry."""
+"""Pydantic schemas for directional survey stations, telemetry, and 3D uncertainty.
+
+Powered by arrowell_engine.
+"""
 
 from typing import List, Optional
 
@@ -31,6 +34,20 @@ class SurveyStationCreate(SurveyStationBase):
     well_id: Optional[str] = None
 
 
+# =====================================================================
+# ISCWSA 3D ELLIPSOID OF UNCERTAINTY SCHEMA (arrowell_engine)
+# =====================================================================
+class EouResponseSchema(BaseModel):
+    """3D Ellipsoid of Uncertainty (EOU) parameters calculated by arrowell_engine."""
+    semi_major: float = Field(..., description="3D Maximum semi-axis in meters")
+    semi_intermediate: float = Field(..., description="3D Intermediate semi-axis in meters")
+    semi_minor: float = Field(..., description="3D Minimum semi-axis in meters")
+    horiz_semi_major: float = Field(..., description="Horizontal projection major axis in meters")
+    horiz_semi_minor: float = Field(..., description="Horizontal projection minor axis in meters")
+    horiz_azimuth: float = Field(..., description="Horizontal ellipse azimuth in degrees")
+    eigenvectors: List[List[float]] = Field(..., description="3x3 rotation modal matrix from eigen-decomposition")
+
+
 class SurveyStationResponse(SurveyStationBase):
     """Full station payload returned to frontend clients."""
     id: int
@@ -55,6 +72,9 @@ class SurveyStationResponse(SurveyStationBase):
     is_qc_pass: bool = Field(True, description="QC acceptance status")
     status: str = Field("Raw", description="Station processing status")
 
+    # 3D Ellipsoid of Uncertainty from arrowell_engine
+    eou: Optional[EouResponseSchema] = None
+
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -71,6 +91,7 @@ class TrajectoryCalculationResponse(BaseModel):
     total_tvd: float
     max_dls: float
     stations: List[SurveyStationResponse]
+
 
 class BhaConfigSchema(BaseModel):
     """BHA and drilling fluid configuration parameters for SAG correction."""
@@ -100,6 +121,7 @@ class SagCalculationResponse(BaseModel):
     peak_sag_deg: float
     stations_corrected: int
     corrections: List[SagStationCorrection]
+
 
 # =====================================================================
 # ANTI-COLLISION & ISCWSA SEPARATION FACTOR SCHEMAS
@@ -144,6 +166,10 @@ class AntiCollisionPointOutput(BaseModel):
     is_violation: bool = Field(..., description="True if collision threshold is breached (SF < 1.0)")
     warning_level: str = Field(..., description="Safety status: 'SAFE', 'WARNING', or 'CRITICAL'")
 
+    # 3D EOU parameters calculated by arrowell_engine at closest approach
+    subject_eou: Optional[EouResponseSchema] = None
+    offset_eou: Optional[EouResponseSchema] = None
+
 
 class AntiCollisionScanResponse(BaseModel):
     """Full Anti-Collision scan response payload."""
@@ -153,4 +179,12 @@ class AntiCollisionScanResponse(BaseModel):
     min_separation_factor: float = Field(..., description="Minimum Separation Factor along the well")
     closest_distance_m: float = Field(..., description="Minimum center-to-center distance in meters")
     closest_md_m: float = Field(..., description="Measured depth at minimum distance in meters")
-    scan_points: List[AntiCollisionPointOutput] = Field(default_factory=list, description="Station-by-station scan profile")
+    scan_points: List[AntiCollisionPointOutput] = Field(default=[], description="Station-by-station scan profile")
+
+class MsaConfigSchema(BaseModel):
+    """Configuration settings for Multi-Station Analysis (MSA) optimization solver."""
+    method: str = Field("trf", description="Optimization solver: 'trf' (Trust Region Reflective) or 'de' (Differential Evolution)")
+    max_iter: int = Field(50, description="Maximum iterations or generations limit", ge=5, le=500)
+    popsize: int = Field(15, description="Population multiplier for Differential Evolution", ge=5, le=50)
+    enable_misalignment: bool = Field(True, description="Enable cross-axis sensor misalignment calibration")
+    enable_ref_corrections: bool = Field(True, description="Enable reference field residual estimation")

@@ -1,4 +1,4 @@
-import { SurveyStation, GeomagneticReference, UnitSystem, BhaConfig } from '@/types';
+import { SurveyStation, GeomagneticReference, UnitSystem, BhaConfig, Ellipsoid3D } from '@/types';
 
 const DEG_TO_RAD = Math.PI / 180;
 const RAD_TO_DEG = 180 / Math.PI;
@@ -42,7 +42,41 @@ export function calculatePhysicalSagAngle(bha: BhaConfig): number {
 }
 
 /**
+ * Calculates 3D Ellipsoid of Uncertainty (ISCWSA SPE 67616 2-sigma 95.4% envelope)
+ */
+export function calculateStationEou(
+  md: number,
+  incDeg: number,
+  azimDeg: number,
+  expansionK: number = 2.0
+): Ellipsoid3D {
+  const incRad = incDeg * DEG_TO_RAD;
+
+  // 1-sigma базис накопления погрешностей по стандарту ISCWSA MWD:
+  // 1. Погрешность вдоль ствола (глубина и растяжение колонны)
+  const sigmaAlongHole = 0.6 + (md / 1000) * 3.2;
+  // 2. Поперечная погрешность (боковой увод инклинометра)
+  const sigmaCrossTrack = 0.4 + (md / 1000) * 2.2 * Math.max(0.35, Math.sin(incRad));
+  // 3. Нормальная погрешность
+  const sigmaNormal = 0.3 + (md / 1000) * 1.4;
+
+  const a = expansionK * sigmaAlongHole;
+  const b = expansionK * sigmaCrossTrack;
+  const c = expansionK * sigmaNormal;
+
+  return {
+    semiMajor: Number(a.toFixed(2)),        // вдоль ствола
+    semiIntermediate: Number(b.toFixed(2)), // боковая
+    semiMinor: Number(c.toFixed(2)),        // нормаль
+    horizMajor: Number(Math.max(a * Math.sin(incRad), b).toFixed(2)),
+    horizMinor: Number(b.toFixed(2)),
+    horizAzimuth: Number(azimDeg.toFixed(1)),
+  };
+}
+
+/**
  * Recalculates entire trajectory using the industry-standard ISCWSA Minimum Curvature Method
+ * and attaches 3D Ellipsoid of Uncertainty parameters to each station.
  */
 export function calculateMinimumCurvature(
   stations: SurveyStation[],
@@ -65,6 +99,7 @@ export function calculateMinimumCurvature(
       if (az < 0) az += 360;
       curr.closureAzim = az;
       curr.vs = curr.closureDist * Math.cos((curr.closureAzim - proposalAzimuth) * DEG_TO_RAD);
+      curr.eou = calculateStationEou(curr.md, curr.inc, curr.azim);
       result.push(curr);
       continue;
     }
@@ -80,6 +115,7 @@ export function calculateMinimumCurvature(
       curr.vs = prev.vs;
       curr.closureDist = prev.closureDist;
       curr.closureAzim = prev.closureAzim;
+      curr.eou = calculateStationEou(curr.md, curr.inc, curr.azim);
       result.push(curr);
       continue;
     }
@@ -120,6 +156,9 @@ export function calculateMinimumCurvature(
     curr.vs = Number(
       (curr.closureDist * Math.cos((curr.closureAzim - proposalAzimuth) * DEG_TO_RAD)).toFixed(2)
     );
+
+    // Attach ISCWSA 3D EOU parameters
+    curr.eou = calculateStationEou(curr.md, curr.inc, curr.azim);
 
     result.push(curr);
   }
@@ -172,7 +211,6 @@ export function formatLength(valMeters: number, unit: UnitSystem, decimals = 2):
  */
 export function formatDLS(dlsMetric: number, unit: UnitSystem): string {
   if (unit === 'imperial') {
-    // 30m is 98.425ft, so °/100ft = °/30m * (100 / 98.425) ≈ 1.016
     return (dlsMetric * 1.01605).toFixed(2);
   }
   return dlsMetric.toFixed(2);

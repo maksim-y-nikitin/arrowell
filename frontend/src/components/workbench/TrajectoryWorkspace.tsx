@@ -30,12 +30,12 @@ export const TrajectoryWorkspace: React.FC = () => {
         </div>
 
         {/* View Mode Switcher: 3D / 2D / Split */}
-        <div className="flex items-center bg-slate-100 dark:bg-[#141828] p-0.5 rounded-lg border border-slate-200 dark:border-[#1e2439] text-3xs">
+        <div className="inline-flex items-center p-0.5 rounded-md bg-slate-100 dark:bg-[#121624] border border-slate-200 dark:border-[#1b2135] text-3xs font-mono">
           <button
             onClick={() => setDisplayMode('3d')}
-            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md font-medium transition-colors ${
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-3xs font-medium transition-all ${
               displayMode === '3d'
-                ? 'bg-white dark:bg-[#20273d] text-sky-600 dark:text-sky-400 font-semibold shadow-2xs'
+                ? 'bg-white dark:bg-[#1e2439] text-sky-600 dark:text-sky-400 font-semibold shadow-2xs'
                 : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
             }`}
             title={isRu ? 'Полноэкранная 3D модель' : 'Full 3D Visualizer'}
@@ -46,12 +46,12 @@ export const TrajectoryWorkspace: React.FC = () => {
 
           <button
             onClick={() => setDisplayMode('2d')}
-            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md font-medium transition-colors ${
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-3xs font-medium transition-all ${
               displayMode === '2d'
-                ? 'bg-white dark:bg-[#20273d] text-sky-600 dark:text-sky-400 font-semibold shadow-2xs'
+                ? 'bg-white dark:bg-[#1e2439] text-sky-600 dark:text-sky-400 font-semibold shadow-2xs'
                 : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
             }`}
-            title={isRu ? '2D проекции: План (+N/+E) и Вертикальная секция (TVD vs VS)' : '2D Projections: Plan and Vertical Section'}
+            title={isRu ? '2D проекции: План (+N/+E) и Вертикальная секция (TVD vs VS)' : '2D Projections'}
           >
             <Compass className="w-3.5 h-3.5" />
             <span>{isRu ? '2D План и Секция' : '2D Projections'}</span>
@@ -59,9 +59,9 @@ export const TrajectoryWorkspace: React.FC = () => {
 
           <button
             onClick={() => setDisplayMode('split')}
-            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md font-medium transition-colors ${
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-3xs font-medium transition-all ${
               displayMode === 'split'
-                ? 'bg-white dark:bg-[#20273d] text-sky-600 dark:text-sky-400 font-semibold shadow-2xs'
+                ? 'bg-white dark:bg-[#1e2439] text-sky-600 dark:text-sky-400 font-semibold shadow-2xs'
                 : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
             }`}
             title={isRu ? 'Совмещенный режим: 3D и 2D бок о бок' : 'Combined 3D & 2D side-by-side'}
