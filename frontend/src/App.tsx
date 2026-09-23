@@ -8,7 +8,7 @@ import { Trajectory3D } from '@/components/workbench/Trajectory3D';
 import { Projections2D } from '@/components/workbench/Projections2D';
 import { TrajectoryWorkspace } from '@/components/workbench/TrajectoryWorkspace';
 import { SurveyLogTable } from '@/components/workbench/SurveyLogTable';
-import { SensorQCDashboard } from '@/components/workbench/SensorQCDashboard';
+import { SensorQCDashboard, SensorQCStrip } from '@/components/workbench/SensorQCDashboard';
 import { AntiCollisionScan } from '@/components/workbench/AntiCollisionScan';
 import { AddSurveyModal } from '@/components/modals/AddSurveyModal';
 import { ImportModal } from '@/components/modals/ImportModal';
@@ -20,15 +20,16 @@ const WorkstationContent: React.FC = () => {
   const { viewMode, notification, dismissNotification, theme } = useWellbore();
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
 
-  // Модальные окна
+  // Modal dialog visibility states
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [isGeoModalOpen, setIsGeoModalOpen] = useState(false);
 
-  // Подвкладка в режиме Split (управляется нативно внутри вьюпорта)
+  // Sub-view toggle in Overview mode (3D vs 2D)
   const [visualSubTab, setVisualSubTab] = useState<'3d' | '2d'>('3d');
 
+  // Synchronize root html class for dark/light themes
   useEffect(() => {
     const root = document.documentElement;
     if (theme === 'dark') {
@@ -39,33 +40,29 @@ const WorkstationContent: React.FC = () => {
   }, [theme]);
 
   return (
-    <div
-      className={`flex flex-col h-screen w-screen bg-[#f1f5f9] dark:bg-[#07090e] text-slate-900 dark:text-slate-100 overflow-hidden font-sans select-none ${
-        theme === 'dark' ? 'dark' : ''
-      }`}
-    >
-      {/* 1. Глобальная панель навигации */}
+    <div className="flex flex-col h-screen w-screen overflow-hidden select-none bg-[var(--bg-0)] text-[var(--fg-0)] font-sans">
+      {/* 1. Header Navigation Bar (40px) */}
       <HeaderNav
         onToggleSidebar={() => setIsSidebarOpen((prev) => !prev)}
         isSidebarOpen={isSidebarOpen}
       />
 
-      {/* 2. Рабочее пространство */}
-      <div className="flex flex-1 overflow-hidden relative">
-        {/* Иерархия скважин (боковая панель) */}
+      {/* 2. Workspace Body (1fr) */}
+      <div className="flex flex-1 min-h-0 min-w-0 overflow-hidden">
+        {/* Collapsible Hierarchy Sidebar (216px) */}
         <div
-          className={`h-full transition-all duration-300 ease-in-out overflow-hidden shrink-0 z-20 ${
-            isSidebarOpen ? 'w-64 sm:w-72 opacity-100' : 'w-0 opacity-0 pointer-events-none'
+          className={`h-full transition-all duration-150 ease-in-out shrink-0 overflow-hidden z-20 ${
+            isSidebarOpen ? 'w-[216px]' : 'w-0 pointer-events-none'
           }`}
         >
-          <div className="w-64 sm:w-72 h-full">
+          <div className="w-[216px] h-full">
             <SidebarTree />
           </div>
         </div>
 
-        {/* Главная рабочая плоскость */}
-        <main className="flex-1 flex flex-col overflow-hidden relative bg-white dark:bg-[#0b0e17]">
-          {/* Инженерная командная строка */}
+        {/* Main Workstation Plane */}
+        <main className="flex-1 flex flex-col min-h-0 min-w-0 overflow-hidden bg-[var(--bg-0)]">
+          {/* Engineering Action Toolbar */}
           <WorkspaceRibbon
             onOpenAddModal={() => setIsAddModalOpen(true)}
             onOpenImportModal={() => setIsImportModalOpen(true)}
@@ -73,12 +70,13 @@ const WorkstationContent: React.FC = () => {
             onOpenGeoModal={() => setIsGeoModalOpen(true)}
           />
 
-          {/* Рабочие окна */}
-          <div className="flex-1 overflow-hidden relative">
-            {/* Split View: Ликвидирован лишний ярус шапки, переключатель 3D/2D встроен прямо во вьюпорт */}
+          {/* Primary Viewport Area */}
+          <div className="flex-1 min-h-0 min-w-0 overflow-hidden p-2">
+            {/* Split / Overview Layout */}
             {viewMode === 'split' && (
-              <div className="w-full h-full grid grid-cols-1 lg:grid-cols-12 overflow-hidden">
-                <div className="lg:col-span-7 h-full flex flex-col border-b lg:border-b-0 lg:border-r border-slate-200 dark:border-[#171c2b] relative overflow-hidden">
+              <div className="w-full h-full grid grid-cols-1 lg:grid-cols-[1.4fr_1fr] grid-rows-[1fr_200px] gap-2">
+                {/* Visualizer Panel (Top Left) */}
+                <div className="min-h-0 min-w-0 flex flex-col rounded-[var(--r2)] border border-[var(--line)] bg-[var(--bg-1)] overflow-hidden shadow-[var(--shadow-1)]">
                   {visualSubTab === '3d' ? (
                     <Trajectory3D visualSubTab={visualSubTab} onSubTabChange={setVisualSubTab} />
                   ) : (
@@ -86,32 +84,42 @@ const WorkstationContent: React.FC = () => {
                   )}
                 </div>
 
-                <div className="lg:col-span-5 h-full overflow-hidden">
+                {/* Directional Survey Table (Full Right Column) */}
+                <div className="lg:row-span-2 min-h-0 min-w-0 flex flex-col rounded-[var(--r2)] border border-[var(--line)] bg-[var(--bg-1)] overflow-hidden shadow-[var(--shadow-1)]">
                   <SurveyLogTable />
+                </div>
+
+                {/* Sensor QC Strip (Bottom Left) */}
+                <div className="min-h-0 min-w-0 flex flex-col rounded-[var(--r2)] border border-[var(--line)] bg-[var(--bg-1)] overflow-hidden shadow-[var(--shadow-1)]">
+                  <SensorQCStrip />
                 </div>
               </div>
             )}
 
+            {/* Standalone Trajectory View */}
             {viewMode === 'trajectory' && (
-              <div className="w-full h-full flex flex-col">
+              <div className="w-full h-full flex flex-col rounded-[var(--r2)] border border-[var(--line)] bg-[var(--bg-1)] overflow-hidden shadow-[var(--shadow-1)]">
                 <TrajectoryWorkspace />
               </div>
             )}
 
+            {/* Standalone Table View */}
             {viewMode === 'table' && (
-              <div className="w-full h-full flex flex-col">
-                <SurveyLogTable />
+              <div className="w-full h-full flex flex-col rounded-[var(--r2)] border border-[var(--line)] bg-[var(--bg-1)] overflow-hidden shadow-[var(--shadow-1)]">
+                <SurveyLogTable isFullPage />
               </div>
             )}
 
+            {/* Standalone QC Analytics View */}
             {viewMode === 'analytics' && (
-              <div className="w-full h-full flex flex-col">
+              <div className="w-full h-full flex flex-col rounded-[var(--r2)] border border-[var(--line)] bg-[var(--bg-1)] overflow-hidden shadow-[var(--shadow-1)]">
                 <SensorQCDashboard />
               </div>
             )}
 
+            {/* Standalone Anti-Collision Scan View */}
             {viewMode === 'anticollision' && (
-              <div className="w-full h-full flex flex-col">
+              <div className="w-full h-full flex flex-col rounded-[var(--r2)] border border-[var(--line)] bg-[var(--bg-1)] overflow-hidden shadow-[var(--shadow-1)]">
                 <AntiCollisionScan />
               </div>
             )}
@@ -119,40 +127,40 @@ const WorkstationContent: React.FC = () => {
         </main>
       </div>
 
-      {/* Уведомления */}
+      {/* 3. Status Bar Footer (22px) */}
+      <StatusBar />
+
+      {/* Global Notifications Toast */}
       {notification && (
         <div
-          className={`fixed bottom-8 right-4 z-50 px-3 py-1.5 rounded-md border shadow-xl flex items-center gap-2 text-3xs font-mono transition-all ${
+          className={`fixed bottom-8 right-4 z-50 px-3 py-1.5 rounded-[var(--r1)] border shadow-[var(--shadow-2)] flex items-center gap-2 text-[11px] font-mono transition-all ${
             notification.type === 'success'
-              ? 'bg-emerald-50 dark:bg-[#0c2419] border-emerald-500/40 text-emerald-800 dark:text-emerald-300'
+              ? 'bg-[var(--ok-soft)] border-[var(--ok-line)] text-[var(--ok)]'
               : notification.type === 'warning'
-              ? 'bg-amber-50 dark:bg-[#291e0a] border-amber-500/40 text-amber-800 dark:text-amber-300'
+              ? 'bg-[var(--warn-soft)] border-[var(--warn-line)] text-[var(--warn)]'
               : notification.type === 'error'
-              ? 'bg-rose-50 dark:bg-[#2e1014] border-rose-500/40 text-rose-800 dark:text-rose-300'
-              : 'bg-white dark:bg-[#121626] border-slate-200 dark:border-[#202742] text-slate-800 dark:text-slate-200'
+              ? 'bg-[var(--crit-soft)] border-[var(--crit-line)] text-[var(--crit)]'
+              : 'bg-[var(--bg-1)] border-[var(--line)] text-[var(--fg-0)]'
           }`}
         >
           {notification.type === 'success' ? (
-            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+            <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-[var(--ok)]" />
           ) : notification.type === 'warning' ? (
-            <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+            <AlertTriangle className="w-3.5 h-3.5 shrink-0 text-[var(--warn)]" />
           ) : (
-            <Info className="w-3.5 h-3.5 text-sky-500 shrink-0" />
+            <Info className="w-3.5 h-3.5 shrink-0 text-[var(--accent)]" />
           )}
           <span>{notification.message}</span>
           <button
             onClick={dismissNotification}
-            className="ml-1 p-0.5 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 rounded"
+            className="ml-1 p-0.5 text-[var(--fg-2)] hover:text-[var(--fg-0)] rounded"
           >
             <X className="w-3 h-3" />
           </button>
         </div>
       )}
 
-      {/* 3. Статус-бар */}
-      <StatusBar />
-
-      {/* Модалки */}
+      {/* Engineering Configuration Modals */}
       <AddSurveyModal isOpen={isAddModalOpen} onClose={() => setIsAddModalOpen(false)} />
       <ImportModal isOpen={isImportModalOpen} onClose={() => setIsImportModalOpen(false)} />
       <ExportModal isOpen={isExportModalOpen} onClose={() => setIsExportModalOpen(false)} />

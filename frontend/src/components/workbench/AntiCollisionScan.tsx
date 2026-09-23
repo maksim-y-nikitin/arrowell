@@ -8,23 +8,21 @@ import { formatLength } from '@/utils/directionalMath';
 import {
   ShieldCheck,
   Crosshair,
-  Sliders,
-  RefreshCw,
   AlertTriangle,
   CheckCircle2,
   AlertOctagon,
 } from 'lucide-react';
 
 export const AntiCollisionScan: React.FC = () => {
-  const { stations, unitSystem, activeWell, geoRef, language, notify } = useWellbore();
+  const { stations, unitSystem, activeWell, geoRef, language } = useWellbore();
 
   const [selectedOffsetWell, setSelectedOffsetWell] = useState<string>(offsetWellsData[0].name);
   const [errorModel, setErrorModel] = useState<string>('ISCWSA_MWD_REV4');
   const [expansionK, setExpansionK] = useState<number>(2.0);
-  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [, setIsLoading] = useState<boolean>(false);
   const [isLiveBackend, setIsLiveBackend] = useState<boolean>(false);
 
-  // Scan points state (populated via backend ISCWSA API, with local fallback)
+  // Proximity scan calculation results
   const [scanPoints, setScanPoints] = useState<AntiCollisionPoint[]>([]);
 
   const activeOffset = useMemo(() => {
@@ -33,7 +31,7 @@ export const AntiCollisionScan: React.FC = () => {
     );
   }, [selectedOffsetWell]);
 
-  // Execute Anti-Collision scan via backend or local fallback
+  // Execute Anti-Collision scan via backend API with local resilience fallback
   useEffect(() => {
     let isMounted = true;
 
@@ -81,7 +79,7 @@ export const AntiCollisionScan: React.FC = () => {
           setIsLiveBackend(true);
         }
       } catch (err) {
-        // Fallback to local heuristic if backend endpoint is unavailable
+        // Graceful fallback to local heuristic calculation if backend is offline
         if (isMounted) {
           console.warn('Backend Anti-Collision API unreachable, using local fallback:', err);
           const localPoints = calculateFallbackScan(stations, activeOffset.stations, activeOffset.name);
@@ -132,232 +130,236 @@ export const AntiCollisionScan: React.FC = () => {
   const isRu = language === 'ru';
 
   return (
-    <div className="w-full h-full p-4 flex flex-col gap-4 select-none overflow-y-auto font-mono text-xs transition-colors bg-slate-50 dark:bg-[#090a0f]">
-      {/* Top Banner: Controls and Parameters */}
-      <div className="p-4 rounded-lg border shadow-xs flex flex-wrap items-center justify-between gap-4 transition-colors bg-white dark:bg-[#0c0e17] border-slate-200 dark:border-[#171c2b]">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-md bg-sky-500/10 text-sky-600 dark:text-sky-400 flex items-center justify-center">
-            <ShieldCheck className="w-4 h-4" />
+    <div className="w-full h-full flex flex-col select-none overflow-hidden bg-[var(--bg-1)] font-mono text-[11px]">
+      {/* Panel Header */}
+      <div className="h-9 px-3 border-b border-[var(--line)] flex items-center justify-between gap-3 shrink-0">
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 font-semibold text-[11.5px] font-sans text-[var(--fg-0)]">
+            <ShieldCheck className="w-3.5 h-3.5 text-[var(--fg-2)]" />
+            <span>{isRu ? 'Анализ сближения стволов ISCWSA' : 'ISCWSA Anti-Collision Scan'}</span>
           </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="font-semibold text-slate-900 dark:text-white">
-                {isRu ? 'Анализ сближения стволов (ISCWSA Error Model)' : 'ISCWSA Anti-Collision Proximity Scan'}
-              </span>
-              <span
-                className={`px-1.5 py-0.2 rounded text-4xs font-semibold ${
-                  isLiveBackend
-                    ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30'
-                    : 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30'
-                }`}
-              >
-                {isLiveBackend ? 'ISCWSA 3D EOU (Live)' : 'Local Fallback'}
-              </span>
-            </div>
-            <div className="text-3xs text-slate-500 dark:text-slate-400">
-              {activeWell.name} vs. <span className="font-medium text-slate-700 dark:text-slate-300">{activeOffset.name}</span>
-            </div>
-          </div>
+
+          <span className={`pill ${minSeparationFactor >= 1.5 ? 'ok' : minSeparationFactor >= 1.0 ? 'warn' : 'crit'}`}>
+            {minSeparationFactor >= 1.5 ? 'Clear' : minSeparationFactor >= 1.0 ? '1 warning' : 'Collision alert'}
+          </span>
+
+          <span className="pill acc">
+            {isLiveBackend ? 'ISCWSA 3D EOU (Live)' : 'Local Fallback'}
+          </span>
         </div>
 
-        {/* Configuration Toolbar */}
-        <div className="flex flex-wrap items-center gap-2.5">
-          {/* Offset Well */}
-          <div className="flex items-center gap-1.5">
-            <span className="text-3xs text-slate-500">{isRu ? 'Соседняя:' : 'Scan Against:'}</span>
+        {/* Scan Parameters Toolbar */}
+        <div className="flex items-center gap-2">
+          {/* Offset Well Selection */}
+          <div className="flex items-center gap-1">
+            <span className="text-[10px] text-[var(--fg-3)] uppercase font-semibold">
+              {isRu ? 'Скважина:' : 'Offset:'}
+            </span>
             <select
               value={selectedOffsetWell}
               onChange={(e) => setSelectedOffsetWell(e.target.value)}
-              className="bg-white dark:bg-[#121624] border border-slate-200 dark:border-[#1c2236] rounded-md px-2 py-1 text-3xs text-slate-800 dark:text-slate-200 focus:outline-none focus:border-sky-500"
+              className="bg-[var(--bg-2)] border border-[var(--line)] rounded-[var(--r1)] px-1.5 py-0.5 text-[10.5px] text-[var(--fg-0)] outline-none focus:border-[var(--accent)]"
             >
               {offsetWellsData.map((off) => (
                 <option key={off.name} value={off.name}>
-                  {off.name} ({off.slot})
+                  {off.name}
                 </option>
               ))}
             </select>
           </div>
 
-          {/* Error Model */}
-          <div className="flex items-center gap-1.5">
-            <span className="text-3xs text-slate-500">{isRu ? 'Модель:' : 'Model:'}</span>
+          {/* Model Selection */}
+          <div className="flex items-center gap-1">
+            <span className="text-[10px] text-[var(--fg-3)] uppercase font-semibold">
+              {isRu ? 'Модель:' : 'Model:'}
+            </span>
             <select
               value={errorModel}
               onChange={(e) => setErrorModel(e.target.value)}
-              className="bg-white dark:bg-[#121624] border border-slate-200 dark:border-[#1c2236] rounded-md px-2 py-1 text-3xs text-slate-800 dark:text-slate-200 focus:outline-none focus:border-sky-500"
+              className="bg-[var(--bg-2)] border border-[var(--line)] rounded-[var(--r1)] px-1.5 py-0.5 text-[10.5px] text-[var(--fg-0)] outline-none focus:border-[var(--accent)]"
             >
-              <option value="ISCWSA_MWD_REV4">ISCWSA MWD Rev 4 (Generic)</option>
-              <option value="ISCWSA_MWD_SAG_REV4">ISCWSA MWD+SAG Rev 4</option>
-              <option value="ISCWSA_MWD_IFR1_REV4">ISCWSA MWD+IFR1 Rev 4</option>
-              <option value="ISCWSA_MWD_REV5">ISCWSA MWD Rev 5.11 (Latest)</option>
+              <option value="ISCWSA_MWD_REV4">ISCWSA MWD Rev 4</option>
+              <option value="ISCWSA_MWD_SAG_REV4">ISCWSA MWD+SAG</option>
+              <option value="ISCWSA_MWD_REV5">ISCWSA MWD Rev 5.11</option>
             </select>
           </div>
 
           {/* Expansion k-Factor */}
-          <div className="flex items-center gap-1.5">
-            <span className="text-3xs text-slate-500">k (σ):</span>
+          <div className="flex items-center gap-1">
+            <span className="text-[10px] text-[var(--fg-3)] uppercase font-semibold">k:</span>
             <select
               value={expansionK}
               onChange={(e) => setExpansionK(parseFloat(e.target.value))}
-              className="bg-white dark:bg-[#121624] border border-slate-200 dark:border-[#1c2236] rounded-md px-2 py-1 text-3xs text-slate-800 dark:text-slate-200 focus:outline-none focus:border-sky-500 font-bold text-sky-600 dark:text-sky-400"
+              className="bg-[var(--bg-2)] border border-[var(--line)] rounded-[var(--r1)] px-1.5 py-0.5 text-[10.5px] font-bold text-[var(--accent)] outline-none focus:border-[var(--accent)]"
             >
-              <option value={2.0}>2.00 (2σ • 95.4% 1D)</option>
-              <option value={2.7955}>2.80 (3D 95.0% Sphere)</option>
-              <option value={3.0}>3.00 (3σ • 99.7% 1D)</option>
+              <option value={2.0}>2.00 (2σ)</option>
+              <option value={2.7955}>2.80 (3D 95%)</option>
+              <option value={3.0}>3.00 (3σ)</option>
             </select>
           </div>
         </div>
       </div>
 
-      {/* Summary KPI Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
-        {/* KPI 1: Separation Factor */}
-        <div className="p-3 rounded-lg border shadow-xs transition-colors bg-white dark:bg-[#0c0e17] border-slate-200 dark:border-[#171c2b]">
-          <div className="text-3xs text-slate-500 uppercase">{isRu ? 'Мин. фактор разделения (SF)' : 'Min Separation Factor (SF)'}</div>
-          <div
-            className={`text-lg font-bold mt-1 flex items-center gap-1.5 ${
-              minSeparationFactor >= 1.5
-                ? 'text-emerald-600 dark:text-emerald-400'
+      {/* Main Content Area */}
+      <div className="flex-1 p-3 overflow-y-auto space-y-3">
+        {/* 4 Summary KPI Metric Cards */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          {/* KPI 1: Separation Factor (SF) */}
+          <div className="p-3 bg-[var(--bg-2)] border border-[var(--line)] rounded-[var(--r2)] flex flex-col justify-between">
+            <div className="text-[10px] uppercase font-mono tracking-[0.06em] text-[var(--fg-3)]">
+              {isRu ? 'Мин. фактор SF' : 'Min SF'}
+            </div>
+            <div
+              className={`text-[22px] font-bold font-mono mt-1 flex items-center gap-1.5 ${
+                minSeparationFactor >= 1.5
+                  ? 'text-[var(--ok)]'
+                  : minSeparationFactor >= 1.0
+                  ? 'text-[var(--warn)]'
+                  : 'text-[var(--crit)]'
+              }`}
+            >
+              {minSeparationFactor >= 1.5 ? (
+                <CheckCircle2 className="w-4 h-4" />
+              ) : minSeparationFactor >= 1.0 ? (
+                <AlertTriangle className="w-4 h-4" />
+              ) : (
+                <AlertOctagon className="w-4 h-4" />
+              )}
+              <span>{minSeparationFactor.toFixed(2)}</span>
+            </div>
+            <div className="text-[9.5px] text-[var(--fg-2)] mt-0.5">
+              {minSeparationFactor >= 1.5
+                ? 'Safe (SF >= 1.5)'
                 : minSeparationFactor >= 1.0
-                ? 'text-amber-600 dark:text-amber-400'
-                : 'text-rose-600 dark:text-rose-400'
-            }`}
-          >
-            {minSeparationFactor >= 1.5 ? (
-              <CheckCircle2 className="w-4 h-4" />
-            ) : minSeparationFactor >= 1.0 ? (
-              <AlertTriangle className="w-4 h-4" />
-            ) : (
-              <AlertOctagon className="w-4 h-4" />
-            )}
-            <span>{minSeparationFactor.toFixed(2)}</span>
+                ? 'Caution (1.0 <= SF < 1.5)'
+                : 'Critical collision risk'}
+            </div>
           </div>
-          <div className="text-3xs text-slate-400 mt-0.5">
-            {minSeparationFactor >= 1.5
-              ? (isRu ? 'Безопасно (SF ≥ 1.5)' : 'Safe (SF >= 1.5)')
-              : minSeparationFactor >= 1.0
-              ? (isRu ? 'Внимание (1.0 ≤ SF < 1.5)' : 'Caution (1.0 <= SF < 1.5)')
-              : (isRu ? 'Критично (SF < 1.0 Риск столкновения)' : 'Critical (Collision Risk)')}
+
+          {/* KPI 2: Center Distance (Dc) */}
+          <div className="p-3 bg-[var(--bg-2)] border border-[var(--line)] rounded-[var(--r2)] flex flex-col justify-between">
+            <div className="text-[10px] uppercase font-mono tracking-[0.06em] text-[var(--fg-3)]">
+              {isRu ? 'Мин. расстояние (Dc)' : 'Min Distance'}
+            </div>
+            <div className="text-[22px] font-bold font-mono mt-1 text-[var(--fg-0)]">
+              {closestPoint ? formatLength(closestPoint.centerDistance, unitSystem) : '—'} {lenUnit}
+            </div>
+            <div className="text-[9.5px] text-[var(--fg-2)] mt-0.5">
+              {isRu ? 'На глубине MD' : 'At MD'}: {closestPoint ? formatLength(closestPoint.md, unitSystem) : '—'} {lenUnit}
+            </div>
+          </div>
+
+          {/* KPI 3: Closest MD Depth */}
+          <div className="p-3 bg-[var(--bg-2)] border border-[var(--line)] rounded-[var(--r2)] flex flex-col justify-between">
+            <div className="text-[10px] uppercase font-mono tracking-[0.06em] text-[var(--fg-3)]">
+              {isRu ? 'Точка сближения MD' : 'Closest MD'}
+            </div>
+            <div className="text-[22px] font-bold font-mono mt-1 text-[var(--fg-0)]">
+              {closestPoint ? formatLength(closestPoint.md, unitSystem) : '—'} {lenUnit}
+            </div>
+            <div className="text-[9.5px] text-[var(--fg-2)] mt-0.5">
+              Offset MD: {closestPoint ? formatLength(closestPoint.offsetMd, unitSystem) : '—'} {lenUnit}
+            </div>
+          </div>
+
+          {/* KPI 4: Uncertainty Envelope */}
+          <div className="p-3 bg-[var(--bg-2)] border border-[var(--line)] rounded-[var(--r2)] flex flex-col justify-between">
+            <div className="text-[10px] uppercase font-mono tracking-[0.06em] text-[var(--fg-3)]">
+              {isRu ? 'Суммарный EOU (k*Σσ)' : 'Envelope (k*Σσ)'}
+            </div>
+            <div className="text-[22px] font-bold font-mono mt-1 text-[var(--accent)]">
+              {closestPoint ? formatLength(closestPoint.combinedUncertainty, unitSystem) : '—'} {lenUnit}
+            </div>
+            <div className="text-[9.5px] text-[var(--fg-2)] mt-0.5">
+              Clearance: {closestPoint ? formatLength(closestPoint.clearanceDistance, unitSystem) : '—'} {lenUnit}
+            </div>
           </div>
         </div>
 
-        {/* KPI 2: Closest Distance */}
-        <div className="p-3 rounded-lg border shadow-xs transition-colors bg-white dark:bg-[#0c0e17] border-slate-200 dark:border-[#171c2b]">
-          <div className="text-3xs text-slate-500 uppercase">{isRu ? 'Мин. расстояние (Dc)' : 'Min Center Distance (Dc)'}</div>
-          <div className="text-lg font-semibold mt-1 text-slate-800 dark:text-slate-200">
-            {closestPoint ? formatLength(closestPoint.centerDistance, unitSystem) : '—'} {lenUnit}
+        {/* Proximity Scan Tabular Profile */}
+        <div className="border border-[var(--line)] rounded-[var(--r2)] overflow-hidden bg-[var(--bg-1)] shadow-[var(--shadow-1)]">
+          <div className="px-3 py-1.5 border-b border-[var(--line)] bg-[var(--bg-2)] flex items-center justify-between text-[10px] text-[var(--fg-2)]">
+            <div className="flex items-center gap-1.5 font-semibold text-[var(--fg-0)]">
+              <Crosshair className="w-3 h-3 text-[var(--accent)]" />
+              <span>{isRu ? 'ПРОФИЛЬ РАСЧЕТА СБЛИЖЕНИЯ' : 'ISCWSA 3D PROXIMITY SCAN PROFILE'}</span>
+            </div>
+            <span>{scanPoints.length} {isRu ? 'точек' : 'scan stations'}</span>
           </div>
-          <div className="text-3xs text-slate-400 mt-0.5">
-            {isRu ? 'На глубине MD' : 'At MD'}: {closestPoint ? formatLength(closestPoint.md, unitSystem) : '—'} {lenUnit}
-          </div>
-        </div>
 
-        {/* KPI 3: Combined Uncertainty Envelope */}
-        <div className="p-3 rounded-lg border shadow-xs transition-colors bg-white dark:bg-[#0c0e17] border-slate-200 dark:border-[#171c2b]">
-          <div className="text-3xs text-slate-500 uppercase">{isRu ? 'Суммарный эллипсоид k*(σS+σO)' : 'Uncertainty Envelope (k*Σσ)'}</div>
-          <div className="text-lg font-semibold mt-1 text-sky-600 dark:text-sky-400">
-            {closestPoint ? formatLength(closestPoint.combinedUncertainty, unitSystem) : '—'} {lenUnit}
-          </div>
-          <div className="text-3xs text-slate-400 mt-0.5">
-            σS: {closestPoint ? formatLength(closestPoint.sigmaSubject, unitSystem) : '—'} | σO: {closestPoint ? formatLength(closestPoint.sigmaOffset, unitSystem) : '—'} {lenUnit}
-          </div>
-        </div>
-
-        {/* KPI 4: Surface Clearance Distance */}
-        <div className="p-3 rounded-lg border shadow-xs transition-colors bg-white dark:bg-[#0c0e17] border-slate-200 dark:border-[#171c2b]">
-          <div className="text-3xs text-slate-500 uppercase">{isRu ? 'Чистый зазор между стенками' : 'Borehole Clearance (Dc-2R)'}</div>
-          <div className="text-lg font-semibold mt-1 text-slate-800 dark:text-slate-200">
-            {closestPoint ? formatLength(closestPoint.clearanceDistance, unitSystem) : '—'} {lenUnit}
-          </div>
-          <div className="text-3xs text-slate-400 mt-0.5">
-            {isRu ? 'Радиус ствола' : 'Hole radii'}: 2 × 108 mm
-          </div>
-        </div>
-      </div>
-
-      {/* Main Proximity Scan Data Table */}
-      <div className="flex-1 rounded-lg border overflow-hidden flex flex-col shadow-xs transition-colors bg-white dark:bg-[#0c0e17] border-slate-200 dark:border-[#171c2b]">
-        <div className="p-2.5 border-b border-slate-100 dark:border-[#171c2b] flex items-center justify-between text-3xs text-slate-500">
-          <div className="flex items-center gap-1.5 font-semibold text-slate-700 dark:text-slate-300">
-            <Crosshair className="w-3 h-3 text-sky-500" />
-            <span>{isRu ? 'ПРОФИЛЬ РАСЧЕТА СБЛИЖЕНИЯ И ЭЛЛИПСОИДОВ ISCWSA' : 'ISCWSA 3D PROXIMITY SCAN PROFILE'}</span>
-          </div>
-          <span>{scanPoints.length} {isRu ? 'точек' : 'scan stations'}</span>
-        </div>
-
-        <div className="flex-1 overflow-auto">
-          <table className="w-full text-right border-collapse text-xs">
-            <thead className="sticky top-0 z-10 border-b border-slate-200 dark:border-[#1c2235] bg-slate-100 dark:bg-[#0f121d] text-slate-500 dark:text-slate-400 text-3xs uppercase tracking-wider font-semibold">
-              <tr>
-                <th className="py-2 px-3 text-right">MD ({lenUnit})</th>
-                <th className="py-2 px-3 text-right">TVD ({lenUnit})</th>
-                <th className="py-2 px-3 text-right">Offset MD ({lenUnit})</th>
-                <th className="py-2 px-3 text-right">{isRu ? 'Межосевое Dc' : 'Center Dist (Dc)'} ({lenUnit})</th>
-                <th className="py-2 px-3 text-right">{isRu ? 'Зазор стенки' : 'Clearance'} ({lenUnit})</th>
-                <th className="py-2 px-3 text-right">σ_Subj ({lenUnit})</th>
-                <th className="py-2 px-3 text-right">σ_Off ({lenUnit})</th>
-                <th className="py-2 px-3 text-right">{isRu ? 'Зона EOU' : 'EOU Envelope'} ({lenUnit})</th>
-                <th className="py-2 px-3 text-right font-bold">SF</th>
-                <th className="py-2 px-3 text-center">{isRu ? 'Статус' : 'Status'}</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 dark:divide-[#141828]">
-              {scanPoints.map((pt, i) => (
-                <tr key={i} className="hover:bg-slate-50 dark:hover:bg-[#111422] transition-colors">
-                  <td className="py-1.5 px-3 font-semibold text-sky-600 dark:text-sky-400">
-                    {formatLength(pt.md, unitSystem)}
-                  </td>
-                  <td className="py-1.5 px-3 text-slate-700 dark:text-slate-300">
-                    {formatLength(pt.tvd, unitSystem)}
-                  </td>
-                  <td className="py-1.5 px-3 text-slate-500">
-                    {formatLength(pt.offsetMd, unitSystem)}
-                  </td>
-                  <td className="py-1.5 px-3 font-medium text-slate-800 dark:text-slate-200">
-                    {formatLength(pt.centerDistance, unitSystem)}
-                  </td>
-                  <td className="py-1.5 px-3 text-slate-600 dark:text-slate-400">
-                    {formatLength(pt.clearanceDistance, unitSystem)}
-                  </td>
-                  <td className="py-1.5 px-3 text-slate-400">
-                    {formatLength(pt.sigmaSubject, unitSystem)}
-                  </td>
-                  <td className="py-1.5 px-3 text-slate-400">
-                    {formatLength(pt.sigmaOffset, unitSystem)}
-                  </td>
-                  <td className="py-1.5 px-3 font-medium text-sky-600 dark:text-sky-400">
-                    {formatLength(pt.combinedUncertainty, unitSystem)}
-                  </td>
-                  <td className="py-1.5 px-3">
-                    <span
-                      className={`font-bold ${
-                        pt.separationFactor >= 1.5
-                          ? 'text-emerald-600 dark:text-emerald-400'
-                          : pt.separationFactor >= 1.0
-                          ? 'text-amber-600 dark:text-amber-400'
-                          : 'text-rose-600 dark:text-rose-400'
-                      }`}
-                    >
-                      {pt.separationFactor.toFixed(2)}
-                    </span>
-                  </td>
-                  <td className="py-1.5 px-3 text-center">
-                    <span
-                      className={`inline-block px-1.5 py-0.5 rounded text-4xs font-semibold uppercase ${
-                        pt.status === 'safe'
-                          ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
-                          : pt.status === 'warning'
-                          ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
-                          : 'bg-rose-500/15 text-rose-600 dark:text-rose-400'
-                      }`}
-                    >
-                      {pt.status}
-                    </span>
-                  </td>
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse font-mono text-[11px] text-right">
+              <thead className="bg-[var(--bg-2)] border-b border-[var(--line-strong)] text-[10px] font-sans font-semibold uppercase tracking-wider text-[var(--fg-3)]">
+                <tr>
+                  <th className="py-2 px-3 text-right">MD ({lenUnit})</th>
+                  <th className="py-2 px-3 text-right">TVD ({lenUnit})</th>
+                  <th className="py-2 px-3 text-right">Offset MD</th>
+                  <th className="py-2 px-3 text-right">Dc ({lenUnit})</th>
+                  <th className="py-2 px-3 text-right">{isRu ? 'Зазор' : 'Clearance'}</th>
+                  <th className="py-2 px-3 text-right">σ Subj</th>
+                  <th className="py-2 px-3 text-right">σ Off</th>
+                  <th className="py-2 px-3 text-right">EOU</th>
+                  <th className="py-2 px-3 text-right font-bold">SF</th>
+                  <th className="py-2 px-3 text-center">{isRu ? 'Статус' : 'Status'}</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-[var(--line)]">
+                {scanPoints.map((pt, i) => (
+                  <tr key={i} className="hover:bg-[var(--bg-2)] transition-colors">
+                    <td className="py-1.5 px-3 font-semibold text-[var(--accent)]">
+                      {formatLength(pt.md, unitSystem)}
+                    </td>
+                    <td className="py-1.5 px-3 text-[var(--fg-1)]">
+                      {formatLength(pt.tvd, unitSystem)}
+                    </td>
+                    <td className="py-1.5 px-3 text-[var(--fg-2)]">
+                      {formatLength(pt.offsetMd, unitSystem)}
+                    </td>
+                    <td className="py-1.5 px-3 font-medium text-[var(--fg-0)]">
+                      {formatLength(pt.centerDistance, unitSystem)}
+                    </td>
+                    <td className="py-1.5 px-3 text-[var(--fg-1)]">
+                      {formatLength(pt.clearanceDistance, unitSystem)}
+                    </td>
+                    <td className="py-1.5 px-3 text-[var(--fg-3)]">
+                      {formatLength(pt.sigmaSubject, unitSystem)}
+                    </td>
+                    <td className="py-1.5 px-3 text-[var(--fg-3)]">
+                      {formatLength(pt.sigmaOffset, unitSystem)}
+                    </td>
+                    <td className="py-1.5 px-3 font-medium text-[var(--accent)]">
+                      {formatLength(pt.combinedUncertainty, unitSystem)}
+                    </td>
+                    <td className="py-1.5 px-3">
+                      <span
+                        className={`font-bold ${
+                          pt.separationFactor >= 1.5
+                            ? 'text-[var(--ok)]'
+                            : pt.separationFactor >= 1.0
+                            ? 'text-[var(--warn)]'
+                            : 'text-[var(--crit)]'
+                        }`}
+                      >
+                        {pt.separationFactor.toFixed(2)}
+                      </span>
+                    </td>
+                    <td className="py-1.5 px-3 text-center">
+                      <span
+                        className={`pill ${
+                          pt.status === 'safe'
+                            ? 'ok'
+                            : pt.status === 'warning'
+                            ? 'warn'
+                            : 'crit'
+                        }`}
+                      >
+                        {pt.status.toUpperCase()}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
     </div>

@@ -16,99 +16,73 @@ export const TrajectoryWorkspace: React.FC = () => {
   const lastStation = stations[stations.length - 1];
 
   return (
-    <div className="w-full h-full flex flex-col select-none overflow-hidden font-mono text-xs">
-      {/* Sub-header Bar for Trajectory Mode */}
-      <div className="h-9 px-3 border-b flex items-center justify-between gap-3 shrink-0 transition-colors bg-white dark:bg-[#0c0e17] border-slate-200 dark:border-[#171c2b] text-slate-700 dark:text-slate-300">
+    <div className="w-full h-full flex flex-col select-none overflow-hidden bg-[var(--bg-1)] font-mono t-sm">
+      <div className="panel-head justify-between">
         <div className="flex items-center gap-2">
-          <div className="w-2 h-2 rounded-full bg-sky-500 animate-pulse" />
-          <span className="font-semibold text-slate-900 dark:text-white text-3xs sm:text-xs">
-            {isRu ? 'ВИЗУАЛИЗАЦИЯ ТРАЕКТОРИИ' : 'TRAJECTORY VISUALIZER'}
-          </span>
-          <span className="text-3xs text-slate-400 hidden lg:inline">
-            {activeWell.name}
-          </span>
+          <div className="panel-title">
+            <Box className="w-3.5 h-3.5 text-[var(--fg-2)]" />
+            <span>{isRu ? 'Визуализация траектории' : 'Trajectory Visualizer'}</span>
+          </div>
+          <span className="pill acc">{activeWell.name}</span>
         </div>
 
-        {/* View Mode Switcher: 3D / 2D / Split */}
-        <div className="inline-flex items-center p-0.5 rounded-md bg-slate-100 dark:bg-[#121624] border border-slate-200 dark:border-[#1b2135] text-3xs font-mono">
+        <div className="seg">
           <button
+            type="button"
             onClick={() => setDisplayMode('3d')}
-            className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-3xs font-medium transition-all ${
-              displayMode === '3d'
-                ? 'bg-white dark:bg-[#1e2439] text-sky-600 dark:text-sky-400 font-semibold shadow-2xs'
-                : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
-            }`}
-            title={isRu ? 'Полноэкранная 3D модель' : 'Full 3D Visualizer'}
+            className={displayMode === '3d' ? 'on acc' : ''}
           >
-            <Box className="w-3.5 h-3.5" />
-            <span>{isRu ? '3D Вид' : '3D Orbit'}</span>
+            <Box className="w-3 h-3" />
+            <span>3D</span>
           </button>
 
           <button
+            type="button"
             onClick={() => setDisplayMode('2d')}
-            className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-3xs font-medium transition-all ${
-              displayMode === '2d'
-                ? 'bg-white dark:bg-[#1e2439] text-sky-600 dark:text-sky-400 font-semibold shadow-2xs'
-                : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
-            }`}
-            title={isRu ? '2D проекции: План (+N/+E) и Вертикальная секция (TVD vs VS)' : '2D Projections'}
+            className={displayMode === '2d' ? 'on acc' : ''}
           >
-            <Compass className="w-3.5 h-3.5" />
-            <span>{isRu ? '2D План и Секция' : '2D Projections'}</span>
+            <Compass className="w-3 h-3" />
+            <span>2D</span>
           </button>
 
           <button
+            type="button"
             onClick={() => setDisplayMode('split')}
-            className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-3xs font-medium transition-all ${
-              displayMode === 'split'
-                ? 'bg-white dark:bg-[#1e2439] text-sky-600 dark:text-sky-400 font-semibold shadow-2xs'
-                : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
-            }`}
-            title={isRu ? 'Совмещенный режим: 3D и 2D бок о бок' : 'Combined 3D & 2D side-by-side'}
+            className={displayMode === 'split' ? 'on acc' : ''}
           >
-            <Columns className="w-3.5 h-3.5" />
-            <span>{isRu ? '3D + 2D Сплит' : 'Split 3D+2D'}</span>
+            <Columns className="w-3 h-3" />
+            <span>Split</span>
           </button>
         </div>
 
-        {/* Quick Trajectory Metric Pills */}
-        <div className="hidden xl:flex items-center gap-3 text-3xs text-slate-500 dark:text-slate-400">
-          <span>
-            MD: <strong className="text-slate-900 dark:text-slate-200">{formatLength(lastStation?.md || 0, unitSystem)} {lenUnit}</strong>
-          </span>
-          <span>
-            TVD: <strong className="text-slate-900 dark:text-slate-200">{formatLength(lastStation?.tvd || 0, unitSystem)} {lenUnit}</strong>
-          </span>
-          <span>
-            Inc: <strong className="text-slate-900 dark:text-slate-200">{lastStation?.inc.toFixed(1) || 0}°</strong>
-          </span>
-          <span>
-            Azim: <strong className="text-slate-900 dark:text-slate-200">{lastStation?.azim.toFixed(1) || 0}°</strong>
-          </span>
+        <div className="hidden xl:flex items-center gap-3 t-xs text-[var(--fg-2)]">
+          <span>MD: <strong className="text-[var(--fg-0)]">{formatLength(lastStation?.md || 0, unitSystem)} {lenUnit}</strong></span>
+          <span>TVD: <strong className="text-[var(--fg-0)]">{formatLength(lastStation?.tvd || 0, unitSystem)} {lenUnit}</strong></span>
+          <span>Inc: <strong className="text-[var(--fg-0)]">{lastStation?.inc.toFixed(1) || 0}°</strong></span>
+          <span>Azim: <strong className="text-[var(--fg-0)]">{lastStation?.azim.toFixed(1) || 0}°</strong></span>
         </div>
       </div>
 
-      {/* Main Workspace Body */}
       <div className="flex-1 w-full h-full overflow-hidden relative">
         {displayMode === '3d' && (
           <div className="w-full h-full">
-            <Trajectory3D />
+            <Trajectory3D visualSubTab={displayMode} onSubTabChange={(tab) => setDisplayMode(tab)} />
           </div>
         )}
 
         {displayMode === '2d' && (
           <div className="w-full h-full">
-            <Projections2D />
+            <Projections2D visualSubTab={displayMode} onSubTabChange={(tab) => setDisplayMode(tab)} />
           </div>
         )}
 
         {displayMode === 'split' && (
-          <div className="w-full h-full grid grid-cols-1 lg:grid-cols-2 divide-y lg:divide-y-0 lg:divide-x divide-slate-200 dark:divide-[#171c2b]">
+          <div className="w-full h-full grid grid-cols-1 lg:grid-cols-2 divide-y lg:divide-y-0 lg:divide-x divide-[var(--line)]">
             <div className="w-full h-full min-h-[300px]">
-              <Trajectory3D />
+              <Trajectory3D visualSubTab={displayMode} onSubTabChange={(tab) => setDisplayMode(tab)} />
             </div>
             <div className="w-full h-full min-h-[300px]">
-              <Projections2D />
+              <Projections2D visualSubTab={displayMode} onSubTabChange={(tab) => setDisplayMode(tab)} />
             </div>
           </div>
         )}
