@@ -162,4 +162,4 @@ arrowell_engine/
 
 Developed by Maksim Nikitin
 
-[![LinkedIn](https://www.linkedin.com/in/maksim-nikitin-1427ba203?style=for-the-badge&logo=linkedin&logoColor=white)](https://www.linkedin.com/in/YOUR_LINKEDIN_USERNAME/)
+[![LinkedIn](https://img.shields.io/badge/LinkedIn-Profile-0A66C2?style=for-the-badge&logo=linkedin&logoColor=white)](https://www.linkedin.com/in/maksim-nikitin-1427ba203/)
