@@ -14,7 +14,7 @@
 [![Pytest Suite](https://img.shields.io/badge/Tests-24%20Passed%20(100%25)-brightgreen?style=flat&logo=pytest&logoColor=white)](https://docs.pytest.org/)
 [![Benchmarks](https://img.shields.io/badge/Benchmarks-8%20Verified-purple?style=flat&logo=speedtest&logoColor=white)](#-engine-performance-benchmarks)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![LinkedIn](https://img.shields.io/badge/LinkedIn-Connect-0A66C2?style=flat&logo=linkedin&logoColor=white)](https://www.linkedin.com/in/YOUR_LINKEDIN_USERNAME/)
+[![LinkedIn](https://img.shields.io/badge/LinkedIn-Connect-0A66C2?style=flat&logo=linkedin&logoColor=white)](https://www.linkedin.com/in/maksim-nikitin-1427ba203/)
 
 <p align="center">
   A cloud-native, CAD-grade engineering workstation for directional wellbore trajectory calculation, 
