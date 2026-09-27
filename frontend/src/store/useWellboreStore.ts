@@ -42,12 +42,6 @@ export interface NotificationState {
   type: 'info' | 'success' | 'warning' | 'error';
 }
 
-/**
- * Maps raw backend API survey station schema to typed internal application state.
- *
- * @param s - Raw station data from backend API response.
- * @returns Normalized SurveyStation structure.
- */
 function mapApiStationToLocal(s: ApiStation): SurveyStation {
   return {
     id: s.id,
@@ -177,9 +171,7 @@ export const useWellboreStore = create<WellboreStoreState>()(
         geoRef: initialGeoRef,
         bhaConfig: initialBhaConfig,
         msaConfig: {
-          method: 'trf',
-          maxIter: 50,
-          popsize: 15,
+          maxIter: 70,
           enableMisalignment: true,
           enableRefCorrections: true,
         },
@@ -554,9 +546,8 @@ export const useWellboreStore = create<WellboreStoreState>()(
           set({ isCalculatingMSA: true });
           try {
             const res = await triggerMsaAnalysis(activeWellId, {
-              method: msaConfig.method,
+              cma_generations: msaConfig.maxIter,
               max_iter: msaConfig.maxIter,
-              popsize: msaConfig.popsize,
               enable_misalignment: msaConfig.enableMisalignment,
               enable_ref_corrections: msaConfig.enableRefCorrections,
             });
@@ -579,8 +570,8 @@ export const useWellboreStore = create<WellboreStoreState>()(
 
             notify(
               language === 'ru'
-                ? `MSA (${msaConfig.method.toUpperCase()}): ΔBz = ${bz} нТл (${res.stations_analyzed} замеров)`
-                : `MSA (${msaConfig.method.toUpperCase()}): ΔBz = ${bz} nT (${res.stations_analyzed} stations)`,
+                ? `MSA (CMA-ES + TRF): ΔBz = ${bz} нТл (${res.stations_analyzed} замеров)`
+                : `MSA (CMA-ES + TRF): ΔBz = ${bz} nT (${res.stations_analyzed} stations)`,
               'success'
             );
           } catch (err) {

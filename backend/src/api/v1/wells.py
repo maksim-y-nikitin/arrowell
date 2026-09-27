@@ -1,5 +1,3 @@
-"""Wells and field hierarchy API endpoints powered by arrowell_engine."""
-
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
@@ -29,6 +27,7 @@ from schemas.survey import (
     AntiCollisionScanResponse,
     BhaConfigSchema,
     EouResponseSchema,
+    MsaConfigSchema,
     RawStationSensorSchema,
     SagCalculationResponse,
     SurveyStationCreate,
@@ -46,30 +45,11 @@ router = APIRouter(prefix="/wells", tags=["Wells & Hierarchy"])
 
 @router.get("/hierarchy", response_model=List[FieldResponse], summary="Get full field hierarchy")
 def read_hierarchy(db: Session = Depends(get_db)):
-    """
-    Retrieve full oilfield hierarchy tree for navigation.
-
-    Args:
-        db: Scoped database session dependency.
-
-    Returns:
-        List of Field entities containing pads and wells.
-    """
     return get_full_hierarchy(db)
 
 
 @router.get("/{well_id}/stations", response_model=List[SurveyStationResponse], summary="Get survey stations for a well")
 def read_well_stations(well_id: str, db: Session = Depends(get_db)):
-    """
-    Fetch all directional survey stations and calculate EOU using pad reference parameters.
-
-    Args:
-        well_id: Unique identifier string of the wellbore.
-        db: Scoped database session dependency.
-
-    Returns:
-        List of SurveyStationResponse objects with calculated uncertainty ellipsoids.
-    """
     well = get_well_by_id(db, well_id)
     if not well:
         raise HTTPException(status_code=404, detail=f"Wellbore '{well_id}' not found")
@@ -136,26 +116,12 @@ def read_well_stations(well_id: str, db: Session = Depends(get_db)):
     return response_list
 
 
-from schemas.survey import MsaConfigSchema
-
-
 @router.post("/{well_id}/run-msa", summary="Run real MSA correction via arrowell_engine")
 def execute_well_msa(
     well_id: str,
     payload: Optional[MsaConfigSchema] = None,
     db: Session = Depends(get_db),
 ):
-    """
-    Trigger Multi-Station Analysis using configurable optimization solver options.
-
-    Args:
-        well_id: Unique identifier string of the wellbore.
-        payload: Optional MsaConfigSchema containing solver method, iterations, and flags.
-        db: Scoped database session dependency.
-
-    Returns:
-        Calibration results including calculated sensor bias, scale factor, and azimuth shift.
-    """
     well = get_well_by_id(db, well_id)
     if not well:
         raise HTTPException(status_code=404, detail=f"Wellbore '{well_id}' not found")
@@ -177,6 +143,7 @@ def execute_well_msa(
     model = geo_ref.model if geo_ref else settings.DEFAULT_GEOMAG_MODEL
 
     cfg = payload or MsaConfigSchema()
+    gens = cfg.cma_generations or cfg.max_iter or 70
 
     try:
         result = run_msa_mwdcore(
@@ -187,9 +154,7 @@ def execute_well_msa(
             declination_deg=dec,
             grid_convergence_deg=grid,
             geomag_model=model,
-            method=cfg.method,
-            max_iter=cfg.max_iter,
-            popsize=cfg.popsize,
+            cma_generations=gens,
             enable_misalignment=cfg.enable_misalignment,
             enable_ref_corrections=cfg.enable_ref_corrections,
         )
@@ -217,17 +182,6 @@ def add_well_station(
     payload: SurveyStationCreate,
     db: Session = Depends(get_db),
 ):
-    """
-    Insert a survey station and recalculate full downstream wellbore trajectory.
-
-    Args:
-        well_id: Unique identifier string of the wellbore.
-        payload: SurveyStationCreate payload containing MD, inclination, azimuth, and optional sensor data.
-        db: Scoped database session dependency.
-
-    Returns:
-        Newly created and recalculated SurveyStationResponse object.
-    """
     well = get_well_by_id(db, well_id)
     if not well:
         raise HTTPException(status_code=404, detail=f"Wellbore '{well_id}' not found")
@@ -289,17 +243,6 @@ def remove_well_station(
     station_id: int,
     db: Session = Depends(get_db),
 ):
-    """
-    Delete a survey station and cascade trajectory recomputation across remaining stations.
-
-    Args:
-        well_id: Unique identifier string of the wellbore.
-        station_id: Primary key identifier of the survey station to delete.
-        db: Scoped database session dependency.
-
-    Returns:
-        Dictionary indicating status and deleted station identifier.
-    """
     success = delete_survey_station(db, station_id=station_id, well_id=well_id)
     if not success:
         raise HTTPException(
@@ -323,17 +266,6 @@ def execute_well_sag(
     payload: Optional[BhaConfigSchema] = None,
     db: Session = Depends(get_db),
 ):
-    """
-    Execute analytical beam-bending BHA Sag correction on well survey stations.
-
-    Args:
-        well_id: Unique identifier string of the wellbore.
-        payload: Optional BHA configuration schema.
-        db: Scoped database session dependency.
-
-    Returns:
-        SagCalculationResponse containing station-by-station sag corrections.
-    """
     stations = read_well_stations(well_id, db)
     if not stations:
         raise HTTPException(status_code=404, detail=f"No survey stations found for well '{well_id}'")
@@ -344,16 +276,14 @@ def execute_well_sag(
 
 
 class GeomagCalcRequest(BaseModel):
-    """Payload for calculating global geomagnetic reference parameters."""
     latitude: float = Field(..., description="Latitude in degrees (-90 to 90)")
     longitude: float = Field(..., description="Longitude in degrees (-180 to 180)")
     altitude_m: float = Field(0.0, description="Altitude above MSL in meters")
     model: str = Field("WMM2025", description="Model name: WMM2025, IGRF14, or WMMHR2025")
-    date_iso: Optional[str] = Field(None, description="ISO formatted date (e.g. '2026-09-20' or '2026-09-20T12:00:00Z')")
+    date_iso: Optional[str] = Field(None, description="ISO formatted date")
 
 
 class GeomagCalcResponse(BaseModel):
-    """Exact reference geomagnetic and gravitational parameters."""
     model: str
     b_total_ref: float
     dip_ref: float
@@ -369,15 +299,6 @@ class GeomagCalcResponse(BaseModel):
     summary="Compute reference parameters via arrowell_engine",
 )
 def compute_geomag_reference(payload: GeomagCalcRequest):
-    """
-    Calculate exact reference geomagnetic field, dip, declination, and convergence from coordinates.
-
-    Args:
-        payload: GeomagCalcRequest containing geographical coordinates and model name.
-
-    Returns:
-        GeomagCalcResponse with computed geophysical and geodetic reference parameters.
-    """
     if payload.date_iso:
         parsed_dt = datetime.fromisoformat(payload.date_iso)
         if parsed_dt.tzinfo is None:
@@ -439,18 +360,24 @@ def run_anti_collision_endpoint(
     req: AntiCollisionScanRequest,
     db: Session = Depends(get_db),
 ):
-    """
-    Trigger 3D Anti-Collision clearance scan using ISCWSA error models and EOU.
+    if req.subject_stations and len(req.subject_stations) >= 2:
+        stations = [
+            SurveyStationResponse(
+                id=s.id,
+                well_id=well_id,
+                md=s.md,
+                inc=s.inc,
+                azim=s.azim,
+                tvd=s.tvd,
+                northing=s.northing,
+                easting=s.easting,
+                sensor=RawStationSensorSchema(gx=0.0, gy=0.0, gz=1.0, bx=16000.0, by=0.0, bz=50000.0),
+            )
+            for s in req.subject_stations
+        ]
+    else:
+        stations = read_well_stations(well_id, db)
 
-    Args:
-        well_id: Unique identifier string of the subject wellbore.
-        req: AntiCollisionScanRequest payload containing offset trajectory and survey tolerances.
-        db: Scoped database session dependency.
-
-    Returns:
-        AntiCollisionScanResponse with station-by-station clearance and separation factors.
-    """
-    stations = read_well_stations(well_id, db)
     if not stations or len(stations) < 2:
         raise HTTPException(status_code=400, detail="Well has insufficient survey stations")
 

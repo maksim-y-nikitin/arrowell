@@ -1,11 +1,5 @@
-"""Directional survey trajectory and MWD analytics service.
-
-High-performance, clean-room implementation powered by arrowell_engine.
-Fully typed and compatible with PyCharm type checkers, NumPy 2.x, and Pydantic v2.
-"""
-
 import math
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -53,7 +47,6 @@ def _synthesize_forward_sensors(
     dip_deg: float = 72.15,
     g_total: float = 1.0000,
 ) -> Tuple[float, float, float, float, float, float]:
-    """Generate physically consistent 3D sensor projections if telemetry is missing."""
     inc = math.radians(inc_deg)
     azim = math.radians(azim_deg)
     tf = math.radians(gtf_deg)
@@ -89,19 +82,16 @@ def calculate_trajectory_mwdcore(
     well_id: str = "well-active",
     model_name: str = "WMM",
 ) -> TrajectoryCalculationResponse:
-    """Calculate 3D wellbore trajectory, QC flags, and ISCWSA 3D uncertainty envelopes."""
     if not stations:
         return TrajectoryCalculationResponse(
             station_count=0, total_md=0.0, total_tvd=0.0, max_dls=0.0, stations=[]
         )
 
-    # Sort strictly by measured depth
     sorted_stns = sorted(stations, key=lambda s: s.md)
     mds = np.array([s.md for s in sorted_stns], dtype=np.float64)
     incs = np.array([s.inc for s in sorted_stns], dtype=np.float64)
     azims = np.array([s.azim for s in sorted_stns], dtype=np.float64)
 
-    # 1. Vectorized Minimum Curvature calculation
     traj = calculate_mcm_trajectory(
         md=mds,
         inc_deg=incs,
@@ -110,7 +100,6 @@ def calculate_trajectory_mwdcore(
         tie_in=(0.0, 0.0, 0.0),
     )
 
-    # 2. Extract or synthesize physically consistent sensor arrays
     has_real_sensors = []
     sensor_rows = []
 
@@ -147,7 +136,6 @@ def calculate_trajectory_mwdcore(
 
     mag_grid_correction_deg = declination_deg - grid_convergence_deg
 
-    # 3. Resolve QC boundaries
     try:
         family = ModelFamily(model_name.upper())
     except ValueError:
@@ -220,7 +208,6 @@ def calculate_trajectory_mwdcore(
             )
         )
 
-    # 4. Rigorous ISCWSA 3D Ellipsoid of Uncertainty (EOU) calculation via arrowell_engine
     if len(calculated_stations) >= 2:
         try:
             eou_list = calculate_uncertainty_mwdcore(
@@ -229,7 +216,7 @@ def calculate_trajectory_mwdcore(
                 dip_ref_deg=dip_ref_deg,
                 declination_deg=declination_deg,
                 model_name="ISCWSA_MWD_REV4",
-                expansion_k=2.0,  # 2-sigma 95.4%
+                expansion_k=2.0,
             )
             for stn_resp, eou in zip(calculated_stations, eou_list):
                 stn_resp.eou = EouResponseSchema(
@@ -264,32 +251,14 @@ def run_msa_mwdcore(
     declination_deg: float = 12.42,
     grid_convergence_deg: float = 1.25,
     geomag_model: str = "WMM",
-    method: str = "trf",
-    max_iter: int = 50,
-    popsize: int = 15,
+    cma_generations: int = 70,
+    max_iter: Optional[int] = None,
     enable_misalignment: bool = True,
     enable_ref_corrections: bool = True,
+    seed: int = 42,
 ) -> Dict[str, Any]:
-    """
-    Execute Multi-Station Analysis calibration with user-defined optimization solver options.
+    generations_budget = max_iter if max_iter is not None else cma_generations
 
-    Args:
-        stations: Complete list of directional survey stations for the wellbore.
-        b_total_ref: Reference magnetic field magnitude in nanoTesla.
-        dip_ref_deg: Reference magnetic dip angle in degrees.
-        g_total_ref: Reference total gravity magnitude in g units.
-        declination_deg: Magnetic declination angle in degrees.
-        grid_convergence_deg: Grid convergence angle in degrees.
-        geomag_model: Identification string of the geomagnetic reference model.
-        method: Optimization algorithm identifier ('trf' or 'de').
-        max_iter: Maximum iterations or generation budget.
-        popsize: Differential evolution population size multiplier.
-        enable_misalignment: Whether to solve for cross-axis misalignment terms.
-        enable_ref_corrections: Whether to solve for reference field residual deltas.
-
-    Returns:
-        Dictionary containing solver status, correction deltas, and calibrated stations.
-    """
     all_raw_dni = np.array([
         [
             s.sensor.gx, s.sensor.gy, s.sensor.gz,
@@ -316,13 +285,11 @@ def run_msa_mwdcore(
         dip_ref_deg=dip_ref_deg,
         enable_misalignment=enable_misalignment,
         enable_ref_corrections=enable_ref_corrections,
-        method=method,
-        max_iter=max_iter,
-        popsize=popsize,
+        cma_generations=generations_budget,
+        seed=seed,
     )
 
     all_corrected_dni = apply_sensor_correction(all_raw_dni, result.params.to_array())
-
     total_mag_correction = declination_deg - grid_convergence_deg
 
     raw_metrics = compute_survey_metrics(
@@ -355,31 +322,37 @@ def run_msa_mwdcore(
             "azim_cor": round(float(cor_grid_azims[i]), 2),
         })
 
+    param_unc = getattr(result, "param_uncertainties_1sigma", None)
+    if hasattr(param_unc, "tolist"):
+        param_unc = param_unc.tolist()
+
     return {
         "status": "success" if is_success else "warning",
         "geomag_model": family.value,
-        "solver_method": str(method).upper(),
+        "solver_method": "CMA-ES + TRF (HYBRID)",
         "azimuth_correction_deg": mean_az_shift,
-        "delta_b_ref_nt": result.ref_corrections.delta_b,
-        "delta_dip_ref_deg": result.ref_corrections.delta_dip,
+        "delta_b_ref_nt": float(result.ref_corrections.delta_b),
+        "delta_dip_ref_deg": float(result.ref_corrections.delta_dip),
         "axial_bias_bz": round(float(result.params.mbz), 2),
         "cross_bias_bx": round(float(result.params.mbx), 2),
         "cross_bias_by": round(float(result.params.mby), 2),
         "scale_factor_z": round(float(result.params.msz), 5),
         "misalignment_mxy": round(float(result.params.mxy), 5),
         "stations_analyzed": int(np.count_nonzero(msa_mask)),
-        "iterations": result.iterations,
+        "iterations": int(result.iterations),
         "corrected_stations": corrected_station_payloads,
+        "param_uncertainties_1sigma": param_unc,
+        "hit_boundary": bool(getattr(result, "hit_boundary", False)),
         "quality_assessment": {
             "accuracy": is_success,
-            "cost": round(result.cost, 3),
+            "cost": round(float(result.cost), 3),
             "expectation": result.cost < 25.0,
             "reference": True,
         },
     }
 
+
 def build_bha_assembly(config: BhaConfigSchema) -> Tuple[List[BhaComponent], List[StabilizerBlade], float]:
-    """Translate engineering schema parameters into physical beam elements."""
     od_m = config.collar_od_mm / 1000.0
     id_m = config.collar_id_mm / 1000.0
     material = (
@@ -418,7 +391,6 @@ def calculate_well_sag_mwdcore(
     well_id: str = "well-active",
     iscwsa_model_name: str = "ISCWSA_MWD_SAG_REV4",
 ) -> SagCalculationResponse:
-    """Calculate BHA Sag deflection across wellbore stations using beam relaxation."""
     if not stations:
         return SagCalculationResponse(
             status="empty",
@@ -480,7 +452,6 @@ def calculate_uncertainty_mwdcore(
     model_name: str = "ISCWSA_MWD_REV4",
     expansion_k: float = 2.0,
 ) -> List[EllipsoidOfUncertainty]:
-    """Calculate 3D Ellipsoids of Uncertainty (EOU) along calculated survey stations."""
     if len(stations) < 2:
         return []
 
@@ -511,7 +482,6 @@ def calculate_anticollision_mwdcore(
     well_radius_offset_m: float = 0.108,
     expansion_k: float = 2.0,
 ) -> SeparationFactorResult:
-    """Calculate Anti-Collision Clearance and Separation Factor (SF) between two stations."""
     pos_subject = np.array([subject_station.northing, subject_station.easting, subject_station.tvd], dtype=np.float64)
     pos_offset = np.array([offset_station.northing, offset_station.easting, offset_station.tvd], dtype=np.float64)
 
@@ -539,7 +509,6 @@ def run_anticollision_mwdcore(
     dip_ref_deg: float = 72.15,
     declination_deg: float = 12.42,
 ) -> AntiCollisionScanResponse:
-    """Execute high-precision 3D Anti-Collision clearance scan using ISCWSA error propagation."""
     if len(subject_stations) < 2 or len(offset_stations) < 2:
         return AntiCollisionScanResponse(
             status="empty",
@@ -551,7 +520,6 @@ def run_anticollision_mwdcore(
             scan_points=[],
         )
 
-    # 1. Subject well 3D Ellipsoids of Uncertainty (EOU)
     subj_eou = calculate_uncertainty_mwdcore(
         stations=subject_stations,
         b_total_ref=b_total_ref,
@@ -561,8 +529,6 @@ def run_anticollision_mwdcore(
         expansion_k=expansion_k,
     )
 
-    # 2. Используем РЕАЛЬНЫЕ координаты соседней скважины (без сброса в 0, 0, 0)
-    # Преобразуем входные точки соседа в объекты станций с сохранением Northing/Easting/TVD
     offset_station_responses: List[SurveyStationResponse] = []
     for idx, s in enumerate(offset_stations):
         offset_station_responses.append(
@@ -579,7 +545,6 @@ def run_anticollision_mwdcore(
             )
         )
 
-    # Считаем EOU для соседа по его честной траектории
     offset_eou = calculate_uncertainty_mwdcore(
         stations=offset_station_responses,
         b_total_ref=b_total_ref,
@@ -604,7 +569,6 @@ def run_anticollision_mwdcore(
         best_j = -1
         current_min_d = float("inf")
 
-        # Ищем минимальное расстояние до ЧЕСТНЫХ координат сохода
         for j, o_stn in enumerate(offset_station_responses):
             if j >= len(offset_eou):
                 continue

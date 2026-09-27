@@ -8,13 +8,13 @@ export type NodeLevel = 'field' | 'pad' | 'well' | 'run';
 export type WellStatus = 'active' | 'warning' | 'completed' | 'planned';
 
 export interface Ellipsoid3D {
-  semiMajor: number;        // Максимальная 3D полуось (м)
-  semiIntermediate: number; // Промежуточная 3D полуось (м)
-  semiMinor: number;        // Минимальная 3D полуось (м)
-  horizMajor: number;       // Полуось горизонтальной проекции (м)
-  horizMinor: number;       // Малая полуось горизонтальной проекции (м)
-  horizAzimuth: number;     // Азимут ориентации эллипса в плане (градусы)
-  eigenvectors?: number[][]; // 3x3 матрица собственных векторов поворота
+  semiMajor: number;
+  semiIntermediate: number;
+  semiMinor: number;
+  horizMajor: number;
+  horizMinor: number;
+  horizAzimuth: number;
+  eigenvectors?: number[][];
 }
 
 export interface SurveyRun {
@@ -103,7 +103,6 @@ export interface SurveyStation {
   status: 'Raw' | 'MSA Corrected' | 'SAG Applied' | 'SCC Applied' | 'QC Warning';
   appliedCorrections: ('MSA' | 'SAG' | 'SCC')[];
 
-  // Истинный 3D эллипсоид неопределенности ISCWSA из arrowell_engine
   eou?: Ellipsoid3D;
 
   rawValues?: {
@@ -139,6 +138,12 @@ export interface MsaOptimizationResult {
   iterations: number;
   convergenceRms: number;
   correctedStationsCount: number;
+}
+
+export interface MsaConfig {
+  maxIter: number;
+  enableMisalignment: boolean;
+  enableRefCorrections: boolean;
 }
 
 export interface BhaConfig {

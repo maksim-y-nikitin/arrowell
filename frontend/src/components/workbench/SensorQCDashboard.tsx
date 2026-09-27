@@ -30,9 +30,6 @@ interface ChartScaleState {
   zoomY: number;
 }
 
-/**
- * Compact 3-cell micro-strip for Overview mode.
- */
 export const SensorQCStrip: React.FC = () => {
   const { stations, rawStations, geoRef } = useWellbore();
 
@@ -54,31 +51,40 @@ export const SensorQCStrip: React.FC = () => {
   };
 
   const { bMin, bMax } = useMemo(() => {
-    const vals = stations.map((s) => s.bTotal);
-    const min = Math.min(...vals, geoRef.bTotalRef - geoRef.toleranceB);
-    const max = Math.max(...vals, geoRef.bTotalRef + geoRef.toleranceB);
+    const allVals = [
+      ...stations.map((s) => s.bTotal),
+      ...rawStations.map((s) => s.bTotal),
+    ];
+    const min = Math.min(...allVals, geoRef.bTotalRef - geoRef.toleranceB);
+    const max = Math.max(...allVals, geoRef.bTotalRef + geoRef.toleranceB);
     const center = geoRef.bTotalRef;
-    const halfSpan = Math.max(Math.abs(max - center), Math.abs(min - center), geoRef.toleranceB * 1.6);
+    const halfSpan = Math.max(Math.abs(max - center), Math.abs(min - center), geoRef.toleranceB * 1.3) * 1.1;
     return { bMin: center - halfSpan, bMax: center + halfSpan };
-  }, [stations, geoRef]);
+  }, [stations, rawStations, geoRef]);
 
   const { gMin, gMax } = useMemo(() => {
-    const vals = stations.map((s) => s.gTotal);
-    const min = Math.min(...vals, geoRef.gTotalRef - geoRef.toleranceG);
-    const max = Math.max(...vals, geoRef.gTotalRef + geoRef.toleranceG);
+    const allVals = [
+      ...stations.map((s) => s.gTotal),
+      ...rawStations.map((s) => s.gTotal),
+    ];
+    const min = Math.min(...allVals, geoRef.gTotalRef - geoRef.toleranceG);
+    const max = Math.max(...allVals, geoRef.gTotalRef + geoRef.toleranceG);
     const center = geoRef.gTotalRef;
-    const halfSpan = Math.max(Math.abs(max - center), Math.abs(min - center), geoRef.toleranceG * 1.6);
+    const halfSpan = Math.max(Math.abs(max - center), Math.abs(min - center), geoRef.toleranceG * 1.3) * 1.1;
     return { gMin: center - halfSpan, gMax: center + halfSpan };
-  }, [stations, geoRef]);
+  }, [stations, rawStations, geoRef]);
 
   const { dipMin, dipMax } = useMemo(() => {
-    const vals = stations.map((s) => s.dipAngle);
-    const min = Math.min(...vals, geoRef.dipRef - geoRef.toleranceDip);
-    const max = Math.max(...vals, geoRef.dipRef + geoRef.toleranceDip);
+    const allVals = [
+      ...stations.map((s) => s.dipAngle),
+      ...rawStations.map((s) => s.dipAngle),
+    ];
+    const min = Math.min(...allVals, geoRef.dipRef - geoRef.toleranceDip);
+    const max = Math.max(...allVals, geoRef.dipRef + geoRef.toleranceDip);
     const center = geoRef.dipRef;
-    const halfSpan = Math.max(Math.abs(max - center), Math.abs(min - center), geoRef.toleranceDip * 1.6);
+    const halfSpan = Math.max(Math.abs(max - center), Math.abs(min - center), geoRef.toleranceDip * 1.3) * 1.1;
     return { dipMin: center - halfSpan, dipMax: center + halfSpan };
-  }, [stations, geoRef]);
+  }, [stations, rawStations, geoRef]);
 
   const bRawPath = stations
     .map((s, i) => `${i === 0 ? 'M' : 'L'} ${getScaledX(s.md).toFixed(1)} ${getScaledY((rawStations.find((r) => r.id === s.id) || s).bTotal, bMin, bMax).toFixed(1)}`)
@@ -130,7 +136,6 @@ export const SensorQCStrip: React.FC = () => {
       </div>
 
       <div className="flex-1 grid grid-cols-3 gap-[1px] bg-[var(--line)] overflow-hidden">
-        {/* Cell 1: Btotal */}
         <div className="bg-[var(--bg-1)] p-2.5 flex flex-col justify-between">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-1.5 text-[11px] font-semibold text-[var(--fg-0)]">
@@ -152,7 +157,6 @@ export const SensorQCStrip: React.FC = () => {
           </div>
         </div>
 
-        {/* Cell 2: Gtotal */}
         <div className="bg-[var(--bg-1)] p-2.5 flex flex-col justify-between">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-1.5 text-[11px] font-semibold text-[var(--fg-0)]">
@@ -174,7 +178,6 @@ export const SensorQCStrip: React.FC = () => {
           </div>
         </div>
 
-        {/* Cell 3: Dip Angle */}
         <div className="bg-[var(--bg-1)] p-2.5 flex flex-col justify-between">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-1.5 text-[11px] font-semibold text-[var(--fg-0)]">
@@ -202,9 +205,6 @@ export const SensorQCStrip: React.FC = () => {
   );
 };
 
-/**
- * Full page QC analytics dashboard — 3 stacked engineering panels with full Zoom/Scale controls.
- */
 export const SensorQCDashboard: React.FC = () => {
   const { stations, rawStations, geoRef, unitSystem } = useWellbore();
   const lenUnit = unitSystem === 'metric' ? 'm' : 'ft';
@@ -235,10 +235,10 @@ export const SensorQCDashboard: React.FC = () => {
   const minMd = useMemo(() => Math.min(...stations.map((s) => s.md), 0), [stations]);
   const maxMd = useMemo(() => Math.max(...stations.map((s) => s.md), 1000), [stations]);
 
-  const chartHeight = 180;
+  const chartHeight = 240;
   const padL = 60;
   const padR = 24;
-  const padT = 20;
+  const padT = 24;
   const padB = 28;
   const innerHeight = chartHeight - padT - padB;
 
@@ -259,55 +259,60 @@ export const SensorQCDashboard: React.FC = () => {
     setter({ zoomX: 1.0, zoomY: 1.0 });
   };
 
-  // 1. Btotal Chart
   const bChartWidth = Math.round((containerWidth - padL - padR) * scaleB.zoomX);
   const bSvgWidth = padL + padR + bChartWidth;
   const getBX = (md: number) => padL + ((md - minMd) / (maxMd - minMd || 1)) * bChartWidth;
 
   const { bMin, bMax } = useMemo(() => {
-    const vals = stations.map((s) => s.bTotal);
-    const min = Math.min(...vals, geoRef.bTotalRef - geoRef.toleranceB);
-    const max = Math.max(...vals, geoRef.bTotalRef + geoRef.toleranceB);
+    const allVals = [
+      ...stations.map((s) => s.bTotal),
+      ...rawStations.map((s) => s.bTotal),
+    ];
+    const min = Math.min(...allVals, geoRef.bTotalRef - geoRef.toleranceB);
+    const max = Math.max(...allVals, geoRef.bTotalRef + geoRef.toleranceB);
     const center = geoRef.bTotalRef;
-    const halfSpan = Math.max(Math.abs(max - center), Math.abs(min - center), geoRef.toleranceB * 1.5) / scaleB.zoomY;
+    const halfSpan = (Math.max(Math.abs(max - center), Math.abs(min - center), geoRef.toleranceB * 1.3) * 1.15) / scaleB.zoomY;
     return { bMin: center - halfSpan, bMax: center + halfSpan };
-  }, [stations, geoRef, scaleB.zoomY]);
+  }, [stations, rawStations, geoRef, scaleB.zoomY]);
 
   const getBY = (b: number) => padT + innerHeight - ((b - bMin) / (bMax - bMin || 1)) * innerHeight;
 
-  // 2. Gtotal Chart
   const gChartWidth = Math.round((containerWidth - padL - padR) * scaleG.zoomX);
   const gSvgWidth = padL + padR + gChartWidth;
   const getGX = (md: number) => padL + ((md - minMd) / (maxMd - minMd || 1)) * gChartWidth;
 
   const { gMin, gMax } = useMemo(() => {
-    const vals = stations.map((s) => s.gTotal);
-    const min = Math.min(...vals, geoRef.gTotalRef - geoRef.toleranceG);
-    const max = Math.max(...vals, geoRef.gTotalRef + geoRef.toleranceG);
+    const allVals = [
+      ...stations.map((s) => s.gTotal),
+      ...rawStations.map((s) => s.gTotal),
+    ];
+    const min = Math.min(...allVals, geoRef.gTotalRef - geoRef.toleranceG);
+    const max = Math.max(...allVals, geoRef.gTotalRef + geoRef.toleranceG);
     const center = geoRef.gTotalRef;
-    const halfSpan = Math.max(Math.abs(max - center), Math.abs(min - center), geoRef.toleranceG * 1.5) / scaleG.zoomY;
+    const halfSpan = (Math.max(Math.abs(max - center), Math.abs(min - center), geoRef.toleranceG * 1.3) * 1.15) / scaleG.zoomY;
     return { gMin: center - halfSpan, gMax: center + halfSpan };
-  }, [stations, geoRef, scaleG.zoomY]);
+  }, [stations, rawStations, geoRef, scaleG.zoomY]);
 
   const getGY = (g: number) => padT + innerHeight - ((g - gMin) / (gMax - gMin || 1)) * innerHeight;
 
-  // 3. Dip Angle Chart
   const dipChartWidth = Math.round((containerWidth - padL - padR) * scaleDip.zoomX);
   const dipSvgWidth = padL + padR + dipChartWidth;
   const getDipX = (md: number) => padL + ((md - minMd) / (maxMd - minMd || 1)) * dipChartWidth;
 
   const { dipMin, dipMax } = useMemo(() => {
-    const vals = stations.map((s) => s.dipAngle);
-    const min = Math.min(...vals, geoRef.dipRef - geoRef.toleranceDip);
-    const max = Math.max(...vals, geoRef.dipRef + geoRef.toleranceDip);
+    const allVals = [
+      ...stations.map((s) => s.dipAngle),
+      ...rawStations.map((s) => s.dipAngle),
+    ];
+    const min = Math.min(...allVals, geoRef.dipRef - geoRef.toleranceDip);
+    const max = Math.max(...allVals, geoRef.dipRef + geoRef.toleranceDip);
     const center = geoRef.dipRef;
-    const halfSpan = Math.max(Math.abs(max - center), Math.abs(min - center), geoRef.toleranceDip * 1.5) / scaleDip.zoomY;
+    const halfSpan = (Math.max(Math.abs(max - center), Math.abs(min - center), geoRef.toleranceDip * 1.3) * 1.15) / scaleDip.zoomY;
     return { dipMin: center - halfSpan, dipMax: center + halfSpan };
-  }, [stations, geoRef, scaleDip.zoomY]);
+  }, [stations, rawStations, geoRef, scaleDip.zoomY]);
 
   const getDipY = (dip: number) => padT + innerHeight - ((dip - dipMin) / (dipMax - dipMin || 1)) * innerHeight;
 
-  // Paths
   const bRawPath = stations
     .map((s, i) => `${i === 0 ? 'M' : 'L'} ${getBX(s.md).toFixed(1)} ${getBY((rawStations.find((r) => r.id === s.id) || s).bTotal).toFixed(1)}`)
     .join(' ');
@@ -331,8 +336,7 @@ export const SensorQCDashboard: React.FC = () => {
 
   return (
     <div ref={containerRef} className="w-full h-full flex flex-col gap-2 p-2 bg-[var(--bg-0)] overflow-y-auto select-none font-mono text-[11px]">
-      {/* 1. Btotal Panel */}
-      <section className="flex-1 min-h-[240px] flex flex-col rounded-[var(--r2)] border border-[var(--line)] bg-[var(--bg-1)] shadow-[var(--shadow-1)] overflow-hidden">
+      <section className="flex-1 min-h-[280px] flex flex-col rounded-[var(--r2)] border border-[var(--line)] bg-[var(--bg-1)] shadow-[var(--shadow-1)] overflow-hidden">
         <div className="panel-head justify-between">
           <div className="flex items-center gap-2">
             <span className="panel-title">Btotal vs. MD</span>
@@ -342,7 +346,6 @@ export const SensorQCDashboard: React.FC = () => {
           <div className="flex items-center gap-3">
             <span className="pill ok">{stations.length} in spec</span>
 
-            {/* Scale controls */}
             <div className="flex items-center gap-1 bg-[var(--bg-2)] p-0.5 rounded border border-[var(--line)] text-[10px]">
               <span className="text-[var(--fg-3)] px-1 font-sans">MD:</span>
               <button onClick={() => updateChartScale(setScaleB, 'x', -0.25)} className="p-0.5 hover:bg-[var(--bg-1)] rounded text-[var(--fg-2)]"><ZoomOut className="w-3 h-3" /></button>
@@ -358,9 +361,8 @@ export const SensorQCDashboard: React.FC = () => {
           </div>
         </div>
 
-        <div className="flex-1 w-full overflow-x-auto p-2">
+        <div className="flex-1 w-full overflow-x-auto p-2 flex items-center">
           <svg viewBox={`0 0 ${bSvgWidth} ${chartHeight}`} style={{ width: `${bSvgWidth}px`, height: `${chartHeight}px` }}>
-            {/* Tolerance corridor */}
             <rect
               x={padL}
               y={Math.min(getBY(geoRef.bTotalRef + geoRef.toleranceB), getBY(geoRef.bTotalRef - geoRef.toleranceB))}
@@ -368,7 +370,6 @@ export const SensorQCDashboard: React.FC = () => {
               height={Math.abs(getBY(geoRef.bTotalRef - geoRef.toleranceB) - getBY(geoRef.bTotalRef + geoRef.toleranceB))}
               fill="color-mix(in srgb, var(--ok) 14%, transparent)"
             />
-            {/* Reference Line */}
             <line x1={padL} y1={getBY(geoRef.bTotalRef)} x2={padL + bChartWidth} y2={getBY(geoRef.bTotalRef)} stroke="var(--ok)" strokeWidth="1" strokeDasharray="4 3" />
             <text x={padL - 6} y={getBY(geoRef.bTotalRef) + 3} fill="var(--fg-3)" fontSize="9" textAnchor="end">{geoRef.bTotalRef}</text>
 
@@ -409,8 +410,7 @@ export const SensorQCDashboard: React.FC = () => {
         </div>
       </section>
 
-      {/* 2. Gtotal Panel */}
-      <section className="flex-1 min-h-[240px] flex flex-col rounded-[var(--r2)] border border-[var(--line)] bg-[var(--bg-1)] shadow-[var(--shadow-1)] overflow-hidden">
+      <section className="flex-1 min-h-[280px] flex flex-col rounded-[var(--r2)] border border-[var(--line)] bg-[var(--bg-1)] shadow-[var(--shadow-1)] overflow-hidden">
         <div className="panel-head justify-between">
           <div className="flex items-center gap-2">
             <span className="panel-title">Gtotal vs. MD</span>
@@ -435,7 +435,7 @@ export const SensorQCDashboard: React.FC = () => {
           </div>
         </div>
 
-        <div className="flex-1 w-full overflow-x-auto p-2">
+        <div className="flex-1 w-full overflow-x-auto p-2 flex items-center">
           <svg viewBox={`0 0 ${gSvgWidth} ${chartHeight}`} style={{ width: `${gSvgWidth}px`, height: `${chartHeight}px` }}>
             <rect
               x={padL}
@@ -484,8 +484,7 @@ export const SensorQCDashboard: React.FC = () => {
         </div>
       </section>
 
-      {/* 3. Dip Angle Panel */}
-      <section className="flex-1 min-h-[240px] flex flex-col rounded-[var(--r2)] border border-[var(--line)] bg-[var(--bg-1)] shadow-[var(--shadow-1)] overflow-hidden">
+      <section className="flex-1 min-h-[280px] flex flex-col rounded-[var(--r2)] border border-[var(--line)] bg-[var(--bg-1)] shadow-[var(--shadow-1)] overflow-hidden">
         <div className="panel-head justify-between">
           <div className="flex items-center gap-2">
             <span className="panel-title">Dip Angle vs. MD</span>
@@ -510,7 +509,7 @@ export const SensorQCDashboard: React.FC = () => {
           </div>
         </div>
 
-        <div className="flex-1 w-full overflow-x-auto p-2">
+        <div className="flex-1 w-full overflow-x-auto p-2 flex items-center">
           <svg viewBox={`0 0 ${dipSvgWidth} ${chartHeight}`} style={{ width: `${dipSvgWidth}px`, height: `${chartHeight}px` }}>
             <rect
               x={padL}
@@ -559,7 +558,6 @@ export const SensorQCDashboard: React.FC = () => {
         </div>
       </section>
 
-      {/* Hover Inspection Tooltip */}
       {hoveredPoint && (
         <div
           className="fixed z-50 pointer-events-none p-2.5 rounded-[var(--r2)] shadow-[var(--shadow-2)] text-[10.5px] border bg-[var(--bg-1)] text-[var(--fg-0)] border-[var(--line-strong)] font-mono min-w-60"

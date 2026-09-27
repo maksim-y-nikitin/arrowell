@@ -1,7 +1,3 @@
-/**
- * API client module for interacting with ArroWell FastAPI backend.
- */
-
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 import { AntiCollisionScanResponse } from '@/types';
 
@@ -15,6 +11,15 @@ export interface AntiCollisionApiRequest {
     northing: number;
     easting: number;
   }[];
+  subject_stations?: {
+    id: number;
+    md: number;
+    inc: number;
+    azim: number;
+    tvd: number;
+    northing: number;
+    easting: number;
+  }[];
   model_name?: string;
   expansion_k?: number;
   well_radius_subject_m?: number;
@@ -24,9 +29,6 @@ export interface AntiCollisionApiRequest {
   declination_deg?: number;
 }
 
-/**
- * Triggers full 3D ISCWSA position uncertainty and Separation Factor (SF) calculation on backend.
- */
 export async function triggerAntiCollisionScan(
   wellId: string,
   payload: AntiCollisionApiRequest
@@ -38,7 +40,15 @@ export async function triggerAntiCollisionScan(
   });
 
   if (!res.ok) {
-    throw new Error(`Anti-Collision API failed: ${res.statusText}`);
+    let errorDetail = res.statusText;
+    try {
+      const errJson = await res.json();
+      if (errJson?.detail) {
+        errorDetail = typeof errJson.detail === 'string' ? errJson.detail : JSON.stringify(errJson.detail);
+      }
+    } catch {
+    }
+    throw new Error(`Anti-Collision API failed (${res.status}): ${errorDetail}`);
   }
   return res.json();
 }
@@ -137,9 +147,7 @@ export interface GeomagReferenceResponse {
 }
 
 export interface MsaConfig {
-  method: 'trf' | 'de';
   maxIter: number;
-  popsize: number;
   enableMisalignment: boolean;
   enableRefCorrections: boolean;
 }
@@ -196,19 +204,11 @@ export async function deleteWellStation(wellId: string, stationId: number): Prom
   }
 }
 
-/**
- * Request Multi-Station Analysis calibration from backend with configurable solver options.
- *
- * @param wellId - Target wellbore identifier.
- * @param config - Optional optimization solver configuration parameters.
- * @returns Promise resolving to backend MSA calibration response.
- */
 export async function triggerMsaAnalysis(
   wellId: string,
   config?: {
-    method?: 'trf' | 'de';
+    cma_generations?: number;
     max_iter?: number;
-    popsize?: number;
     enable_misalignment?: boolean;
     enable_ref_corrections?: boolean;
   }
@@ -218,9 +218,19 @@ export async function triggerMsaAnalysis(
     headers: { 'Content-Type': 'application/json' },
     body: config ? JSON.stringify(config) : undefined,
   });
+
   if (!res.ok) {
-    throw new Error(`MSA computation failed: ${res.statusText}`);
+    let errorDetail = res.statusText;
+    try {
+      const errJson = await res.json();
+      if (errJson?.detail) {
+        errorDetail = typeof errJson.detail === 'string' ? errJson.detail : JSON.stringify(errJson.detail);
+      }
+    } catch {
+    }
+    throw new Error(`MSA computation failed (${res.status}): ${errorDetail}`);
   }
+
   return res.json();
 }
 

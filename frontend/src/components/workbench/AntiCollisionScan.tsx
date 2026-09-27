@@ -22,7 +22,6 @@ export const AntiCollisionScan: React.FC = () => {
   const [, setIsLoading] = useState<boolean>(false);
   const [isLiveBackend, setIsLiveBackend] = useState<boolean>(false);
 
-  // Proximity scan calculation results
   const [scanPoints, setScanPoints] = useState<AntiCollisionPoint[]>([]);
 
   const activeOffset = useMemo(() => {
@@ -31,7 +30,6 @@ export const AntiCollisionScan: React.FC = () => {
     );
   }, [selectedOffsetWell]);
 
-  // Execute Anti-Collision scan via backend API with local resilience fallback
   useEffect(() => {
     let isMounted = true;
 
@@ -43,6 +41,15 @@ export const AntiCollisionScan: React.FC = () => {
         const response = await triggerAntiCollisionScan(activeWell.id, {
           offset_well_name: activeOffset.name,
           offset_stations: activeOffset.stations,
+          subject_stations: stations.map((s) => ({
+            id: s.id,
+            md: s.md,
+            inc: s.inc,
+            azim: s.azim,
+            tvd: s.tvd,
+            northing: s.northing,
+            easting: s.easting,
+          })),
           model_name: errorModel,
           expansion_k: expansionK,
           b_total_ref: geoRef.bTotalRef,
@@ -79,7 +86,6 @@ export const AntiCollisionScan: React.FC = () => {
           setIsLiveBackend(true);
         }
       } catch (err) {
-        // Graceful fallback to local heuristic calculation if backend is offline
         if (isMounted) {
           console.warn('Backend Anti-Collision API unreachable, using local fallback:', err);
           const localPoints = calculateFallbackScan(stations, activeOffset.stations, activeOffset.name);
@@ -131,7 +137,6 @@ export const AntiCollisionScan: React.FC = () => {
 
   return (
     <div className="w-full h-full flex flex-col select-none overflow-hidden bg-[var(--bg-1)] font-mono text-[11px]">
-      {/* Panel Header */}
       <div className="h-9 px-3 border-b border-[var(--line)] flex items-center justify-between gap-3 shrink-0">
         <div className="flex items-center gap-2">
           <div className="flex items-center gap-1.5 font-semibold text-[11.5px] font-sans text-[var(--fg-0)]">
@@ -148,9 +153,7 @@ export const AntiCollisionScan: React.FC = () => {
           </span>
         </div>
 
-        {/* Scan Parameters Toolbar */}
         <div className="flex items-center gap-2">
-          {/* Offset Well Selection */}
           <div className="flex items-center gap-1">
             <span className="text-[10px] text-[var(--fg-3)] uppercase font-semibold">
               {isRu ? 'Скважина:' : 'Offset:'}
@@ -168,7 +171,6 @@ export const AntiCollisionScan: React.FC = () => {
             </select>
           </div>
 
-          {/* Model Selection */}
           <div className="flex items-center gap-1">
             <span className="text-[10px] text-[var(--fg-3)] uppercase font-semibold">
               {isRu ? 'Модель:' : 'Model:'}
@@ -184,7 +186,6 @@ export const AntiCollisionScan: React.FC = () => {
             </select>
           </div>
 
-          {/* Expansion k-Factor */}
           <div className="flex items-center gap-1">
             <span className="text-[10px] text-[var(--fg-3)] uppercase font-semibold">k:</span>
             <select
@@ -200,11 +201,8 @@ export const AntiCollisionScan: React.FC = () => {
         </div>
       </div>
 
-      {/* Main Content Area */}
       <div className="flex-1 p-3 overflow-y-auto space-y-3">
-        {/* 4 Summary KPI Metric Cards */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-          {/* KPI 1: Separation Factor (SF) */}
           <div className="p-3 bg-[var(--bg-2)] border border-[var(--line)] rounded-[var(--r2)] flex flex-col justify-between">
             <div className="text-[10px] uppercase font-mono tracking-[0.06em] text-[var(--fg-3)]">
               {isRu ? 'Мин. фактор SF' : 'Min SF'}
@@ -236,7 +234,6 @@ export const AntiCollisionScan: React.FC = () => {
             </div>
           </div>
 
-          {/* KPI 2: Center Distance (Dc) */}
           <div className="p-3 bg-[var(--bg-2)] border border-[var(--line)] rounded-[var(--r2)] flex flex-col justify-between">
             <div className="text-[10px] uppercase font-mono tracking-[0.06em] text-[var(--fg-3)]">
               {isRu ? 'Мин. расстояние (Dc)' : 'Min Distance'}
@@ -249,7 +246,6 @@ export const AntiCollisionScan: React.FC = () => {
             </div>
           </div>
 
-          {/* KPI 3: Closest MD Depth */}
           <div className="p-3 bg-[var(--bg-2)] border border-[var(--line)] rounded-[var(--r2)] flex flex-col justify-between">
             <div className="text-[10px] uppercase font-mono tracking-[0.06em] text-[var(--fg-3)]">
               {isRu ? 'Точка сближения MD' : 'Closest MD'}
@@ -262,7 +258,6 @@ export const AntiCollisionScan: React.FC = () => {
             </div>
           </div>
 
-          {/* KPI 4: Uncertainty Envelope */}
           <div className="p-3 bg-[var(--bg-2)] border border-[var(--line)] rounded-[var(--r2)] flex flex-col justify-between">
             <div className="text-[10px] uppercase font-mono tracking-[0.06em] text-[var(--fg-3)]">
               {isRu ? 'Суммарный EOU (k*Σσ)' : 'Envelope (k*Σσ)'}
@@ -276,7 +271,6 @@ export const AntiCollisionScan: React.FC = () => {
           </div>
         </div>
 
-        {/* Proximity Scan Tabular Profile */}
         <div className="border border-[var(--line)] rounded-[var(--r2)] overflow-hidden bg-[var(--bg-1)] shadow-[var(--shadow-1)]">
           <div className="px-3 py-1.5 border-b border-[var(--line)] bg-[var(--bg-2)] flex items-center justify-between text-[10px] text-[var(--fg-2)]">
             <div className="flex items-center gap-1.5 font-semibold text-[var(--fg-0)]">

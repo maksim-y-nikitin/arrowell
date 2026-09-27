@@ -14,10 +14,9 @@ import {
   Building2,
   Navigation,
   Cpu,
-  Zap,
-  Gauge,
   ShieldCheck,
   Ruler,
+  CheckCircle2,
 } from 'lucide-react';
 
 interface SettingsModalProps {
@@ -73,9 +72,7 @@ export const GeomagneticSettingsModal: React.FC<SettingsModalProps> = ({ isOpen,
   const [mudWeight, setMudWeight] = useState<number>(bhaConfig?.mudWeightGcm3 ?? 1.20);
   const [material, setMaterial] = useState<BhaConfig['bhaMaterial']>(bhaConfig?.bhaMaterial ?? 'nm_steel');
 
-  const [solverMethod, setSolverMethod] = useState<'trf' | 'de'>(msaConfig?.method || 'trf');
-  const [maxIter, setMaxIter] = useState<number>(msaConfig?.maxIter || 50);
-  const [popsize, setPopsize] = useState<number>(msaConfig?.popsize || 15);
+  const [maxIter, setMaxIter] = useState<number>(msaConfig?.maxIter || 70);
   const [enableMisalignment, setEnableMisalignment] = useState<boolean>(msaConfig?.enableMisalignment ?? true);
   const [enableRefCorrections, setEnableRefCorrections] = useState<boolean>(msaConfig?.enableRefCorrections ?? true);
 
@@ -197,9 +194,7 @@ export const GeomagneticSettingsModal: React.FC<SettingsModalProps> = ({ isOpen,
     });
 
     updateMsaConfig({
-      method: solverMethod,
       maxIter,
-      popsize,
       enableMisalignment,
       enableRefCorrections,
     });
@@ -239,9 +234,7 @@ export const GeomagneticSettingsModal: React.FC<SettingsModalProps> = ({ isOpen,
             >
               <MapPin />
               <div>
-                <div className="nav-title">
-                  {isRu ? 'Устье и датум' : 'Wellhead & Datum'}
-                </div>
+                <div className="nav-title">{isRu ? 'Устье и датум' : 'Wellhead & Datum'}</div>
                 <div className="nav-sub">WGS-84, RKB, GL</div>
               </div>
             </button>
@@ -253,9 +246,7 @@ export const GeomagneticSettingsModal: React.FC<SettingsModalProps> = ({ isOpen,
             >
               <Compass />
               <div>
-                <div className="nav-title">
-                  {isRu ? 'Геомагнитная модель' : 'Geomagnetic Model'}
-                </div>
+                <div className="nav-title">{isRu ? 'Геомагнитная модель' : 'Geomagnetic Model'}</div>
                 <div className="nav-sub">WMM 2025 Ref</div>
               </div>
             </button>
@@ -267,9 +258,7 @@ export const GeomagneticSettingsModal: React.FC<SettingsModalProps> = ({ isOpen,
             >
               <Layers />
               <div>
-                <div className="nav-title">
-                  {isRu ? 'КНБК и прогиб' : 'BHA & Sag Deflection'}
-                </div>
+                <div className="nav-title">{isRu ? 'КНБК и прогиб' : 'BHA & Sag Deflection'}</div>
                 <div className="nav-sub">Euler-Bernoulli</div>
               </div>
             </button>
@@ -281,10 +270,8 @@ export const GeomagneticSettingsModal: React.FC<SettingsModalProps> = ({ isOpen,
             >
               <Cpu />
               <div>
-                <div className="nav-title">
-                  {isRu ? 'Решатель MSA' : 'MSA Solver Engine'}
-                </div>
-                <div className="nav-sub">TRF / DE Solver</div>
+                <div className="nav-title">{isRu ? 'Решатель MSA' : 'MSA Solver Engine'}</div>
+                <div className="nav-sub">CMA-ES + TRF Hybrid</div>
               </div>
             </button>
 
@@ -294,8 +281,8 @@ export const GeomagneticSettingsModal: React.FC<SettingsModalProps> = ({ isOpen,
                 <span>ISCWSA Standard</span>
               </div>
               {isRu
-                ? 'Влияет на 3D-эллипсы неопределённости (EOU).'
-                : 'Cascades into 3D EOU uncertainty.'}
+                ? 'Регуляризация по 1-sigma модели погрешностей OWSG.'
+                : 'Regularized against 1-sigma OWSG error model.'}
             </div>
           </nav>
 
@@ -306,9 +293,7 @@ export const GeomagneticSettingsModal: React.FC<SettingsModalProps> = ({ isOpen,
                   <div className="field-card">
                     <div className="field-card-head acc">
                       <Building2 />
-                      <span>
-                        {isRu ? 'Идентификация скважины' : 'Wellbore Identification'}
-                      </span>
+                      <span>{isRu ? 'Идентификация скважины' : 'Wellbore Identification'}</span>
                     </div>
                     <div className="field-grid cols-3">
                       <div className="field">
@@ -692,7 +677,7 @@ export const GeomagneticSettingsModal: React.FC<SettingsModalProps> = ({ isOpen,
                     <div className="stat-card">
                       <div>
                         <div className="stat-head">
-                          <Gauge />
+                          <Ruler />
                           <span>
                             {isRu
                               ? 'Теоретический прогиб (при Inc = 90°)'
@@ -718,98 +703,63 @@ export const GeomagneticSettingsModal: React.FC<SettingsModalProps> = ({ isOpen,
                 <>
                   <div className="field-card">
                     <div className="field-card-head mag">
-                      <Zap />
-                      <span>
-                        {isRu ? 'Решатель оптимизации' : 'Optimization Solver'}
-                      </span>
+                      <Cpu />
+                      <span>{isRu ? 'Вычислительное ядро MSA' : 'MSA Computation Engine'}</span>
+                      <span className="pill acc ml-auto">ISCWSA MAP Hybrid</span>
                     </div>
 
-                    <div className="field-grid cols-2">
-                      <button
-                        type="button"
-                        onClick={() => setSolverMethod('trf')}
-                        className={`solver-option ${solverMethod === 'trf' ? 'on acc' : ''}`}
-                      >
-                        <div className="solver-row">
-                          <span className="solver-name">TRF (NLLS)</span>
-                          <span className="pill ok">
-                            {isRu ? 'Быстро · рекомендуется' : 'Fast · Recommended'}
-                          </span>
-                        </div>
-                        <p className="solver-desc">
-                          {isRu
-                            ? 'Градиентный поиск методом отражённых доверительных областей (NLLS).'
-                            : 'Trust Region Reflective non-linear least squares gradient search.'}
-                        </p>
-                      </button>
+                    <div className="p-3 rounded-[var(--r2)] border border-[var(--mag-line)] bg-[var(--mag-soft)] text-[var(--fg-0)] space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="font-semibold text-[13px] text-[var(--mag)]">
+                          {isRu ? 'CMA-ES + TRF (Двухстадийный гибрид)' : 'CMA-ES + TRF (Two-Stage Hybrid)'}
+                        </span>
+                        <span className="pill ok flex items-center gap-1">
+                          <CheckCircle2 className="w-3 h-3" />
+                          <span>{isRu ? 'Индустриальный стандарт' : 'Active Standard'}</span>
+                        </span>
+                      </div>
 
-                      <button
-                        type="button"
-                        onClick={() => setSolverMethod('de')}
-                        className={`solver-option ${solverMethod === 'de' ? 'on mag' : ''}`}
-                      >
-                        <div className="solver-row">
-                          <span className="solver-name">DE (Global)</span>
-                          <span className="pill warn">
-                            {isRu ? 'Стохастический' : 'Stochastic'}
-                          </span>
-                        </div>
-                        <p className="solver-desc">
-                          {isRu
-                            ? 'Генетический алгоритм дифференциальной эволюции для сильных магнитных аномалий.'
-                            : 'Differential Evolution genetic algorithm for heavy magnetic anomalies.'}
-                        </p>
-                      </button>
+                      <p className="text-[11.5px] leading-relaxed text-[var(--fg-1)]">
+                        {isRu
+                          ? '1. Разведка оврага: Глобальный поиск методом адаптации матрицы ковариации (CMA-ES, 12 кандидатов/поколение) с байесовской регуляризацией по 1-sigma модели ISCWSA в обелённом пространстве параметров.\n2. Локальная доводка: Прецизионная квадратичная оптимизация дна оврага методом доверительных областей (TRF) в пределах мягких физических ограничений сенсора.'
+                          : '1. Ravine Exploration: Global search via Covariance Matrix Adaptation (CMA-ES, 12 candidates/gen) with ISCWSA 1-sigma Bayesian MAP regularization in whitened parameter space.\n2. Local Polish: Precision quadratic optimization on the ravine floor via Trust Region Reflective (TRF) within physical sanity bounds.'}
+                      </p>
+
+                      <div className="flex flex-wrap gap-2 pt-1 border-t border-[var(--mag-line)] text-[10.5px] font-mono text-[var(--fg-2)]">
+                        <span>✓ Whitening (u = p/σ)</span>
+                        <span>✓ Защита слайд-бурения</span>
+                        <span>✓ Ковариация Cov(p) = (JᵀJ)⁻¹</span>
+                      </div>
                     </div>
                   </div>
 
                   <div className="field-card">
                     <div className="field-card-head">
-                      <span>
-                        {isRu
-                          ? 'Бюджет сходимости и итерации'
-                          : 'Convergence Budget & Iterations'}
-                      </span>
+                      <span>{isRu ? 'Бюджет оптимизации' : 'Optimization Budget'}</span>
                     </div>
                     <div className="field-grid cols-2">
                       <div className="field">
                         <label className="field-label">
-                          {isRu ? 'Макс. итераций' : 'Max Iterations'}
+                          {isRu ? 'Поколений CMA-ES (Макс. итераций)' : 'CMA-ES Generations (Budget)'}
                         </label>
                         <input
                           type="number"
-                          min={10}
-                          max={300}
+                          min={20}
+                          max={250}
                           value={maxIter}
-                          onChange={(e) => setMaxIter(parseInt(e.target.value, 10) || 50)}
-                          className="input mono mag"
+                          onChange={(e) => setMaxIter(parseInt(e.target.value, 10) || 70)}
+                          className="input mono mag font-bold"
                         />
+                        <span className="text-[10px] text-[var(--fg-3)] mt-1">
+                          {isRu ? 'Рекомендуется: 60–100 поколений (~800 вычислений)' : 'Recommended: 60–100 generations (~800 evaluations)'}
+                        </span>
                       </div>
-                      {solverMethod === 'de' && (
-                        <div className="field">
-                          <label className="field-label">
-                            {isRu ? 'Множитель популяции' : 'Population Multiplier'}
-                          </label>
-                          <input
-                            type="number"
-                            min={5}
-                            max={30}
-                            value={popsize}
-                            onChange={(e) => setPopsize(parseInt(e.target.value, 10) || 15)}
-                            className="input mono"
-                          />
-                        </div>
-                      )}
                     </div>
                   </div>
 
                   <div className="field-card">
                     <div className="field-card-head">
-                      <span>
-                        {isRu
-                          ? 'Степени свободы калибровки'
-                          : 'Calibration Degrees of Freedom'}
-                      </span>
+                      <span>{isRu ? 'Степени свободы калибровки' : 'Calibration Degrees of Freedom'}</span>
                     </div>
                     <div className="field-grid">
                       <label className="check-row">
@@ -821,7 +771,7 @@ export const GeomagneticSettingsModal: React.FC<SettingsModalProps> = ({ isOpen,
                         />
                         <span>
                           {isRu
-                            ? 'Калибровать перекосы блока датчиков (Mxy, Mxz, Myz)'
+                            ? 'Калибровать углы перекоса блока датчиков (Mxy, Mxz, Myz)'
                             : 'Calibrate sensor block misalignments (Mxy, Mxz, Myz)'}
                         </span>
                       </label>

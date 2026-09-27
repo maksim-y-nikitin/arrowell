@@ -19,7 +19,7 @@
 <p align="center">
   A cloud-native, CAD-grade engineering workstation for directional wellbore trajectory calculation, 
   MWD sensor telemetry QA/QC, high-definition continuous inclination fusion, ISCWSA 3D anti-collision clearance scanning, 
-  and real-time physical calibration (MSA, BHA Sag, SCC) — <b>powered by the native <code>arrowell_engine</code> computational kernel</b>.
+  and real-time physical calibration (hybrid CMA-ES+TRF MSA, BHA Sag, SCC) — <b>powered by the native <code>arrowell_engine</code> computational kernel</b>.
 </p>
 
 <p align="center">
@@ -50,8 +50,9 @@
   <img src="docs/images/traj.png" alt="3D WebGL Wellbore Trajectory and 2D Projections" width="85%" />
 </p>
 
-- **Hardware-Accelerated 3D Orbit (Three.js)**: Smooth rendering of primary trajectory, raw uncorrected surveys, planned wellpaths, and multi-well offset clusters using smooth 3D Catmull-Rom splines at 60–120 FPS.
-- **ISCWSA 3D Ellipsoids of Uncertainty (EOU)**: Direct 3D spatial rendering of wireframe and solid error ellipsoids aligned tangentially along the wellbore axis via quaternion coordinate rotations (`THREE.Quaternion.setFromUnitVectors`).
+- **Hardware-Accelerated 3D Orbit (Three.js)**: Smooth rendering of primary trajectory, raw uncorrected surveys, planned wellpaths, and multi-well offset clusters using 3D Catmull-Rom splines at 60–120 FPS.
+- **ISCWSA 3D Ellipsoids of Uncertainty (EOU)**: Direct 3D spatial rendering of wireframe and solid error ellipsoids aligned along the wellbore tangent via quaternion coordinate rotations (`THREE.Quaternion.setFromUnitVectors`).
+- **Interactive Workspace Splitter**: Native draggable horizontal divider in Overview mode with double-click reset to default width ($58\%$), providing seamless manual workspace rebalancing between graphics and tabular logs.
 - **Real-Time Depth Scrubber**: Interactive slider dynamically updating GPU buffer draw ranges (`geometry.setDrawRange`) to inspect well profiles and bit positions at any measured depth ($MD$).
 - **CAD Camera Presets & Precision HUD**: Instant viewpoint switches (`Iso`, `Top`, `Side`, `Bit Focus`) accompanied by floating telemetry readouts ($MD$, $TVD$, $Inc$, $Azim$, $Closure$).
 - **Synchronized 2D Vector Projections (SVG)**: High-resolution Plan View ($+N \text{ vs. } +E$) and Vertical Section View ($TVD \text{ vs. } VS$) featuring pan, wheel zoom, inverse cursor coordinate projection into real-world meters, target horizon planes, and true 1:1 EOU ellipse footprints.
@@ -63,6 +64,7 @@
 
 - **Multi-Sensor QA/QC Dashboard**: Continuous validation of total gravitational field ($G_{\text{total}}$), geomagnetic field intensity ($B_{\text{total}}$), and magnetic dip angle ($Dip$) along the wellbore.
 - **Dynamic Acceptance Corridors**: Automatically calculated multi-sigma tolerance envelopes based on global geomagnetic standards (**WMM2025**, **IGRF-14**, **WMMHR2025**) and local sensor noise baselines.
+- **Full-Spectrum Y-Axis Auto-Scaling**: Dynamic bounds calculation integrating both corrected stations and raw uncorrected telemetry baselines, preventing upper-boundary peak clipping and eliminating container dead space.
 - **Dual-Axis Independent Zooming**: Native SVG inspection allowing independent depth stretching ($MD$ axis) and measurement amplitude scaling (value axis) with interactive cursor inspection tooltips.
 - **Compact Overview Strip**: High-density 3-cell diagnostic strip in the primary overview layout for rapid station pass/fail monitoring while analyzing trajectories.
 
@@ -71,27 +73,28 @@
   <img src="docs/images/overview.png" alt="Directional Corrections Suite Overview" width="85%" />
 </p>
 
-- **Multi-Station Analysis (MSA)**: High-precision 18-parameter calibration solving for 15 sensor terms (triaxial accelerometer/magnetometer biases, scale factors, and sensor block cross-axis misalignments $M_{xy}, M_{xz}, M_{yz}$) plus 3 reference field residual deltas ($\Delta G, \Delta B, \Delta Dip$).
-- **Dual MSA Optimization Engines**:
-  - **TRF (Trust Region Reflective)**: High-speed Non-Linear Least Squares gradient search with Bayesian a priori regularization for rapid drillstring magnetization decoupling.
-  - **DE (Differential Evolution)**: Stochastic genetic global optimizer engineered for complex magnetic anomalies and challenging survey distributions.
-- **Toolface Coverage Analysis**: Automated validation of Gravity Toolface (GTF) angular distribution; identifies rotational gaps ($> 100^\circ$) to constrain cross-axial bounds and prevent overfitting during motor sliding intervals.
+- **Two-Stage Hybrid MSA Engine (CMA-ES $\to$ TRF)**: Completely eliminates heuristic manual solver selection by unifying global exploration with precision local optimization:
+  - *Stage 1 — CMA-ES Ravine Navigation*: Explores non-linear, ill-conditioned parameter valleys via Covariance Matrix Adaptation ($\lambda = 12$ candidates/gen for $N=18$), evaluating Bayesian MAP loss in dimensionless whitened space ($u = p / \sigma_{\text{ISCWSA}}$).
+  - *Stage 2 — TRF (Trust Region Reflective) Polish*: Launches directly from the CMA-ES basin floor to achieve quadratic convergence ($\nabla f \approx 0$) within generous physical hardware sanity bounds ($MB_z \le \pm 5000\text{ nT}$).
+- **Analytical Posterior Parameter Covariance**: Derives the post-calibration uncertainty covariance matrix $\text{Cov}(p) \approx (J^T J)^{-1}$ from the converged Jacobian, delivering $1\sigma$ confidence intervals for client QC certification.
+- **Slide-Drilling Unobservability Safeguard**: Automatically evaluates Gravity Toolface (GTF) rotational dispersion; detects rotational gaps ($> 100^\circ$) to constrain cross-axial bounds ($MB_{x,y} \le \pm 50\text{ nT}$) and prevent numerical singularity during motor sliding intervals.
 - **BHA Gravity Sag Correction (SAG)**: Analytical Euler-Bernoulli beam deflection solver resolving drillstring elasticity ($EI$), fluid hydrostatic buoyancy, local wellbore curvature ($DLS$), and **bilateral borehole wall contact boundaries** (preventing artificial deflection beyond the borehole low-side wall). Reduces residual sag uncertainty to $\le 0.08^\circ$ (1-sigma).
 - **Short Collar Correction (SCC)**: Rapid single-station cross-axial magnetic reconstruction for survey intervals with localized magnetic interference.
-- **Singularity Protection**: Analytical vertical locks locking indeterminate azimuths when inclination drops below $Inc < 0.1^\circ$, suppressing noise-induced azimuth spinning.
+- **Singularity Protection**: Analytical vertical locks securing indeterminate azimuths when inclination drops below $Inc < 0.1^\circ$, suppressing noise-induced azimuth spinning.
 
 ### 4. High-Definition Continuous Inclination (CI) Trajectory Fusion
 - **Dynamic Linear Offset Balancing**: Fuses discrete, high-accuracy static connection surveys (every 30 m) with high-frequency continuous inclination streams (streamed while drilling/rotating every 0.5–2 m).
 - **Curvature-Weighted Azimuth Distribution**: Spreads directional azimuth shifts proportionally over actual dogleg intervals rather than assuming uniform geometric curvature.
 - **TVD-Bounded Douglas-Peucker Thinning**: Compresses high-density survey streams by up to ~95% while strictly guaranteeing vertical depth fidelity within $\le 0.05 \text{ m}$ ($\le 5 \text{ cm}$).
 
-### 5. ISCWSA 3D Position Uncertainty & Anti-Collision Scan
+### 5. ISCWSA 3D Position Uncertainty & Dynamic Anti-Collision Scan
 <p align="center">
   <img src="docs/images/anticol.png" alt="ISCWSA Anti-Collision Proximity Scan" width="85%" />
 </p>
 
+- **Live Corrected Trajectory Synchronization**: Anti-collision engine consumes active in-memory survey profiles (`subject_stations`) directly from the client workstation, dynamically recalculating clearance vectors and Separation Factors whenever MSA, SAG, or SCC corrections are applied.
 - **ISCWSA / OWSG Error Propagation (SPE 67616)**: Full implementation of standardized error models (**ISCWSA MWD Rev 4, Rev 5.11, MWD+SAG, IFR1/2**) with analytical weighting functions for depth, sensor, misalignment, and geomagnetic terms.
-- **Full NEV Covariance Synthesis**: Rigorous accumulation across Random, Systematic, and Global error modes into complete $3 \times 3$ covariance matrices ($\Sigma_{NEV}$) with spectral eigen-decomposition into 3D semi-axes.
+- **Full NEV Covariance Synthesis**: Rigorous accumulation across Random, Systematic, and Global error modes into complete $3 \times 3$ covariance matrices ($\Sigma_{\text{NEV}}$) with spectral eigen-decomposition into 3D semi-axes.
 - **Separation Factor ($SF$) Calculation**: True 3D projection of combined uncertainty along the unit line of closest approach ($\vec{u}^T \Sigma \vec{u}$) between subject and offset wellbores:
   $$SF = \frac{D_{\text{center}} - (R_{\text{subj}} + R_{\text{off}})}{k \cdot (\sigma_{\text{subj}} + \sigma_{\text{off}})}$$
 - **Clearance & Proximity Warnings**: Live status classification (`SAFE` for $SF \ge 1.5$, `WARNING` for $1.0 \le SF < 1.5$, and `CRITICAL` collision alert for $SF < 1.0$) with center-to-center and borehole surface clearance metrics.
@@ -113,7 +116,7 @@
 - 📍 **1. Wellhead & Datum**: Well identification (Pad, Well, Slot), geodetic WGS-84 coordinates (Latitude, Longitude), elevation datums (Rotary Kelly Bushing **RKB**, Ground Level **GL**), air gap calculation, and target formation.
 - 🧭 **2. Geomagnetic Model**: Select between **WMM2025**, **IGRF-14**, and **HDGM** standards; features a one-click **"Auto WMM from Coords"** button calculating total field, dip angle, declination, and meridian grid convergence via backend spherical harmonics.
 - 🏗 **3. BHA & Sag Mechanics**: Standard collar presets (`6-3/4"`, `4-3/4" Slim`, `8" Heavy`), custom outer/inner diameters, stabilizer distances, bit-to-sensor offsets, mud density, collar material selection, and live theoretical deflection previews.
-- ⚡ **4. MSA Solver Engine**: Solver selection (`TRF` non-linear least squares vs. `DE` global genetic search), iteration limits, population size multipliers, and calibration degrees of freedom (sensor misalignments and reference field adjustments).
+- ⚡ **4. MSA Solver Engine**: Detailed overview of the standardized **CMA-ES + TRF (ISCWSA MAP)** hybrid engine; provides controls for CMA-ES generation budgets and degrees of freedom (sensor block misalignments $M_{xy}, M_{xz}, M_{yz}$ and reference field deltas $\Delta G, \Delta B, \Delta Dip$).
 
 ### 8. Industry Data Exchange & Offline-First Resilience
 - **Comprehensive Exporters**: Direct export to **Halliburton Landmark COMPASS (.txt)**, **CWLS LAS 2.0 (.las)**, standard **CSV**, structured **JSON**, and printable/PDF-ready **HTML directional survey reports**.
@@ -135,7 +138,7 @@ Empirically measured with `pytest-benchmark 5.3` on Linux x86_64 (Python 3.11):
 | **Continuous Inc Fusion** | 2,000 streaming CI points | **~11.78 ms** | **84.9 ops/s** | 95.4% mesh compression (TVD $\le 5$ cm) |
 | **ISCWSA 3D Uncertainty** | 500 stations (3D EOU) | **~139.2 ms** | **7.2 ops/s** | Covariance synthesis & Eigen-decomposition |
 | **Geomag WMM2025 Harmonics**| 500 spatial 3D points | **~300.2 ms** | **3.3 ops/s** | Degree 12 Schmidt-normalized Legendre |
-| **MSA Global Optimization**| 6-station D&I sensor run | **~776.2 ms** | **1.3 ops/s** | Differential Evolution + L-BFGS-B polishing |
+| **MSA Hybrid Optimization**| 6-station D&I sensor run | **~148.5 ms** | **6.7 ops/s** | Two-stage CMA-ES + TRF with ISCWSA MAP |
 
 ---
 
@@ -146,11 +149,11 @@ ArroWell relies on its own high-performance, clean-room computational engine (**
 ```text
 arrowell_engine/
 ├── geomag/          # Spherical harmonics (WMM2025/IGRF-14), Schmidt quasi-normalization, model compilers
-├── msa/             # Multi-Station Analysis calibration engine & toolface distribution filters
+├── msa/             # Hybrid CMA-ES + TRF solver, ISCWSA MAP regularization, toolface distribution analysis
 ├── sag/             # BHA beam bending solver with bilateral borehole contact boundaries
-├── sensors/         # Sensor error models, tri-axial transforms, vertical singularity locks
+├── sensors/         # 15-parameter D&I error model, tri-axial transforms, vertical singularity locks
 ├── trajectory/
-│   ├── mcm.py       # Vectorized Minimum Curvature Method (Sawaryn & Thorogood)
+│   ├── mcm.py       # Vectorized Minimum Curvature Method (Sawaryn & Thorogood SPE 84246)
 │   ├── continuous.py# High-Definition Continuous Inclination fusion & TVD-bounded thinning
 │   └── uncertainty.py# ISCWSA 3D position error propagation, EOU eigen-analysis, and Separation Factor (SF)
 └── coords.py        # WGS-84 geodetic transformations and UTM meridian grid convergence
