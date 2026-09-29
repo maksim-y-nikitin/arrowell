@@ -1,5 +1,3 @@
-"""High-Performance Benchmarking Suite for arrowell_engine."""
-
 import math
 from datetime import date
 from pathlib import Path
@@ -26,7 +24,6 @@ from arrowell_engine.trajectory.uncertainty import calculate_trajectory_uncertai
 @pytest.mark.benchmark(group="trajectory-mcm")
 @pytest.mark.parametrize("station_count", [100, 1000, 10000])
 def test_bench_mcm_trajectory(benchmark, station_count):
-    """Benchmark vectorized MCM across 100, 1,000 and 10,000 stations."""
     md = np.linspace(0.0, 10000.0, station_count, dtype=np.float64)
     inc = np.linspace(0.0, 92.0, station_count, dtype=np.float64)
     azim = np.linspace(45.0, 65.0, station_count, dtype=np.float64)
@@ -39,7 +36,6 @@ def test_bench_mcm_trajectory(benchmark, station_count):
 
 @pytest.mark.benchmark(group="continuous-fusion")
 def test_bench_continuous_fusion_and_thinning(benchmark):
-    """Benchmark fusion & TVD-bounded thinning on 2,000 streaming data points."""
     static_md = np.linspace(1000.0, 3000.0, 21)
     static_inc = np.linspace(15.0, 90.0, 21)
     static_az = np.linspace(45.0, 55.0, 21)
@@ -67,7 +63,6 @@ def test_bench_continuous_fusion_and_thinning(benchmark):
 
 @pytest.mark.benchmark(group="bha-sag")
 def test_bench_bha_sag_solver(benchmark):
-    """Benchmark single-station analytical beam deflection calculation."""
     components = [
         BhaComponent(od_m=0.2159, id_m=0.05, length_m=0.5, material=ComponentMaterial.STEEL),
         BhaComponent(od_m=0.17145, id_m=0.0714, length_m=10.0, material=ComponentMaterial.NM_STEEL),
@@ -95,7 +90,6 @@ def test_bench_bha_sag_solver(benchmark):
 
 @pytest.mark.benchmark(group="iscwsa-uncertainty")
 def test_bench_iscwsa_eou_propagation(benchmark):
-    """Benchmark full 3D EOU covariance synthesis on 500 survey stations."""
     station_count = 500
     md = np.linspace(0.0, 5000.0, station_count)
     inc = np.linspace(0.0, 85.0, station_count)
@@ -117,7 +111,6 @@ def test_bench_iscwsa_eou_propagation(benchmark):
 
 @pytest.mark.benchmark(group="geomag-wmm")
 def test_bench_wmm_batch_evaluation(benchmark):
-    """Benchmark vectorized WMM2025 batch evaluation across 500 3D spatial points."""
     models_dir = Path(__file__).resolve().parents[2] / "arrowell_engine" / "geomag" / "assets" / "models"
     wmm_path = models_dir / "wmm2025.npz"
 
@@ -132,16 +125,15 @@ def test_bench_wmm_batch_evaluation(benchmark):
     test_date = date(2025, 6, 1)
 
     res = benchmark(engine.calculate_batch, lats, lons, alts, test_date)
-    assert len(res.total_field_nt) == count\
+    assert len(res.total_field_nt) == count
+
 
 @pytest.mark.benchmark(group="msa-optimization")
 def test_bench_msa_global_optimization(benchmark):
-    """Benchmark MSA Differential Evolution solver on a 6-station MWD run."""
     true_b_ref = 58000.0
     true_dip_ref = 77.0
-    synthetic_mbz = 650.0  # +650 nT помеха от бурильной колонны
+    synthetic_mbz = 650.0
 
-    # 6 точек с полным охватом toolface
     stations_profile = [
         (35.0, 45.0, 15.0),
         (45.0, 48.0, 80.0),
@@ -180,8 +172,7 @@ def test_bench_msa_global_optimization(benchmark):
         dip_ref_deg=true_dip_ref,
         enable_misalignment=False,
         enable_ref_corrections=False,
-        max_iter=60,
-        popsize=10,
+        cma_generations=60,
     )
 
     assert res.success is True

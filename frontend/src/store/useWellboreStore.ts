@@ -18,8 +18,7 @@ import {
 } from '@/types';
 import { translations, TranslationKey } from '@/utils/i18n';
 import { initialGeoRef, initialSurveyStations, mockHierarchy, wellStationsMap } from '@/data/wellsData';
-import { calculateMinimumCurvature } from '@/utils/directionalMath';
-import { runMultiStationAnalysis } from '@/utils/geomagneticEngine';
+import { calculateMinimumCurvature, initialBhaConfig } from '@/utils/directionalMath';
 import {
   ApiStation,
   fetchHierarchy,
@@ -28,8 +27,9 @@ import {
   deleteWellStation,
   triggerMsaAnalysis,
   triggerSagAnalysis,
+  triggerSccAnalysis,
+  resetWellCorrections,
 } from '@/utils/api';
-import { initialBhaConfig, calculatePhysicalSagAngle } from '@/utils/directionalMath';
 
 const wellProposalAzimuthMap: Record<string, number> = {
   'well-102h': 55.0,
@@ -42,7 +42,9 @@ export interface NotificationState {
   type: 'info' | 'success' | 'warning' | 'error';
 }
 
-function mapApiStationToLocal(s: ApiStation): SurveyStation {
+function mapApiStationToLocal(s: ApiStation, rawBaselineMap?: Map<number, SurveyStation>): SurveyStation {
+  const rawMatch = rawBaselineMap?.get(s.md);
+
   return {
     id: s.id,
     md: s.md,
@@ -65,7 +67,7 @@ function mapApiStationToLocal(s: ApiStation): SurveyStation {
     isQcPass: s.is_qc_pass,
     qcIssues: s.is_qc_pass ? [] : ['Out of spec'],
     status: s.status as any,
-    appliedCorrections: [],
+    appliedCorrections: s.correction_type ? [s.correction_type as any] : [],
     eou: s.eou
       ? {
           semiMajor: s.eou.semi_major,
@@ -77,17 +79,29 @@ function mapApiStationToLocal(s: ApiStation): SurveyStation {
           eigenvectors: s.eou.eigenvectors,
         }
       : undefined,
-    rawValues: {
-      inc: s.inc,
-      azim: s.azim,
-      tvd: s.tvd,
-      northing: s.northing,
-      easting: s.easting,
-      dls: s.dls,
-      gTotal: s.g_total,
-      bTotal: s.b_total,
-      dipAngle: s.dip_angle,
-    },
+    rawValues: rawMatch
+      ? {
+          inc: rawMatch.inc,
+          azim: rawMatch.azim,
+          tvd: rawMatch.tvd,
+          northing: rawMatch.northing,
+          easting: rawMatch.easting,
+          dls: rawMatch.dls,
+          gTotal: rawMatch.gTotal,
+          bTotal: rawMatch.bTotal,
+          dipAngle: rawMatch.dipAngle,
+        }
+      : {
+          inc: s.inc,
+          azim: s.azim,
+          tvd: s.tvd,
+          northing: s.northing,
+          easting: s.easting,
+          dls: s.dls,
+          gTotal: s.g_total,
+          bTotal: s.b_total,
+          dipAngle: s.dip_angle,
+        },
   };
 }
 
@@ -110,25 +124,16 @@ interface WellboreStoreState {
   selectedStationId: number | null;
   isCalculatingMSA: boolean;
   isCalculatingSAG: boolean;
+  isCalculatingSCC: boolean;
   msaResult: MsaOptimizationResult | null;
   azimuthCorrection: 'none' | 'msa' | 'scc';
   isSagEnabled: boolean;
-  cachedMsaBz: number;
-  mwdcoreSagMap: Record<number, number>;
 
   getActiveField: () => FieldNode;
   getActivePad: () => PadNode;
   getActiveWell: () => WellNode;
   getActiveRun: () => SurveyRun;
   getActiveProposalAzimuth: () => number;
-
-  applyCombinedCorrections: (
-    azimMode: 'none' | 'msa' | 'scc',
-    sagActive: boolean,
-    msaBz?: number,
-    sagMap?: Record<number, number>,
-    currentBha?: BhaConfig
-  ) => void;
 
   setUnitSystem: (u: UnitSystem) => void;
   setLanguage: (l: Language) => void;
@@ -145,13 +150,13 @@ interface WellboreStoreState {
   updateMsaConfig: (partial: Partial<MsaConfig>) => void;
 
   initWorkstation: () => Promise<void>;
-  setActiveWellById: (wellId: string) => void;
+  setActiveWellById: (wellId: string) => Promise<void>;
   setSelectedStationId: (id: number | null) => void;
   updateWellProperties: (props: WellPropertiesUpdate) => void;
   runMSA: () => Promise<void>;
   runSAG: () => Promise<void>;
-  runSCC: () => void;
-  resetSurveys: () => void;
+  runSCC: () => Promise<void>;
+  resetSurveys: () => Promise<void>;
   addStation: (stn: Partial<SurveyStation>) => Promise<void>;
   deleteStation: (id: number) => Promise<void>;
   importStations: (stns: Partial<SurveyStation>[]) => void;
@@ -183,11 +188,10 @@ export const useWellboreStore = create<WellboreStoreState>()(
         selectedStationId: null,
         isCalculatingMSA: false,
         isCalculatingSAG: false,
+        isCalculatingSCC: false,
         msaResult: null,
         azimuthCorrection: 'none',
         isSagEnabled: false,
-        cachedMsaBz: 280,
-        mwdcoreSagMap: {},
 
         getActiveField: () => {
           const { fields, activeWellId } = get();
@@ -237,111 +241,6 @@ export const useWellboreStore = create<WellboreStoreState>()(
         getActiveProposalAzimuth: () => {
           const { activeWellId } = get();
           return wellProposalAzimuthMap[activeWellId] ?? 55.0;
-        },
-
-        applyCombinedCorrections: (
-          azimMode,
-          sagActive,
-          msaBz = get().cachedMsaBz,
-          sagMap = get().mwdcoreSagMap,
-          currentBha = get().bhaConfig
-        ) => {
-          const { rawStations, geoRef, getActiveProposalAzimuth } = get();
-          const activeCorrectionsList: ('MSA' | 'SAG' | 'SCC')[] = [];
-          if (azimMode === 'msa') activeCorrectionsList.push('MSA');
-          if (azimMode === 'scc') activeCorrectionsList.push('SCC');
-          if (sagActive) activeCorrectionsList.push('SAG');
-
-          const fallbackSag = calculatePhysicalSagAngle(currentBha);
-
-          const updated = rawStations.map((raw) => {
-            let inc = raw.inc;
-            let azim = raw.azim;
-            let bTotal = raw.bTotal;
-            let deltaB = raw.deltaB;
-            let dipAngle = raw.dipAngle;
-            let deltaDip = raw.deltaDip;
-
-            let correctedBz = raw.sensor.bz;
-            let isMagCorrected = false;
-
-            if (azimMode === 'msa') {
-              correctedBz = raw.sensor.bz - msaBz;
-              isMagCorrected = true;
-
-              const incRad = (raw.inc * Math.PI) / 180;
-              const azShift =
-                incRad > 0.05
-                  ? (msaBz / (geoRef.bTotalRef * Math.sin(incRad))) * (180 / Math.PI) * 0.28
-                  : 0;
-              azim = Number(((raw.azim - azShift + 360) % 360).toFixed(2));
-            } else if (azimMode === 'scc') {
-              const bXySq = raw.sensor.bx * raw.sensor.bx + raw.sensor.by * raw.sensor.by;
-              const bRefSq = geoRef.bTotalRef * geoRef.bTotalRef;
-              const diff = Math.max(0, bRefSq - bXySq);
-              const sign = raw.sensor.bz >= 0 ? 1 : -1;
-              correctedBz = sign * Math.sqrt(diff);
-              isMagCorrected = true;
-
-              const gTot = raw.gTotal || 1.0;
-              const ew = (raw.sensor.gx * raw.sensor.by - raw.sensor.gy * raw.sensor.bx) * gTot;
-              const ns =
-                correctedBz * (raw.sensor.gx * raw.sensor.gx + raw.sensor.gy * raw.sensor.gy) -
-                raw.sensor.gz * (raw.sensor.gx * raw.sensor.bx + raw.sensor.gy * raw.sensor.by);
-              const rawMagAzim = ((Math.atan2(ew, ns) * 180) / Math.PI + 360) % 360;
-              const magGridShift = geoRef.declination - geoRef.gridConvergence;
-              azim = Number(((rawMagAzim + magGridShift + 360) % 360).toFixed(2));
-            }
-
-            if (isMagCorrected) {
-              bTotal = Math.round(Math.hypot(raw.sensor.bx, raw.sensor.by, correctedBz));
-              deltaB = Math.round(bTotal - geoRef.bTotalRef);
-
-              const gTot = raw.gTotal || 1.0;
-              const dotGb =
-                (raw.sensor.gx * raw.sensor.bx +
-                  raw.sensor.gy * raw.sensor.by +
-                  raw.sensor.gz * correctedBz) /
-                (gTot * bTotal || 1.0);
-              const safeDot = Math.max(-1.0, Math.min(1.0, dotGb));
-              dipAngle = Number(((Math.asin(safeDot) * 180) / Math.PI).toFixed(2));
-              deltaDip = Number((dipAngle - geoRef.dipRef).toFixed(2));
-            }
-
-            if (sagActive) {
-              const sagDeg =
-                sagMap[raw.id] !== undefined
-                  ? sagMap[raw.id]
-                  : fallbackSag * Math.sin((raw.inc * Math.PI) / 180);
-              inc = Number((raw.inc - sagDeg).toFixed(2));
-            }
-
-            const isQcPass =
-              Math.abs(deltaB) <= geoRef.toleranceB &&
-              Math.abs(deltaDip) <= geoRef.toleranceDip &&
-              Math.abs(raw.deltaG) <= geoRef.toleranceG;
-
-            return {
-              ...raw,
-              inc,
-              azim,
-              bTotal,
-              deltaB,
-              dipAngle,
-              deltaDip,
-              isQcPass,
-              qcIssues: isQcPass ? [] : ['Out of tolerance'],
-              appliedCorrections: [...activeCorrectionsList],
-              status:
-                activeCorrectionsList.length > 0
-                  ? (`${activeCorrectionsList.join('+')} Applied` as any)
-                  : 'Raw',
-            };
-          });
-
-          set({
-            stations: calculateMinimumCurvature(updated, getActiveProposalAzimuth()),
-          });
         },
 
         setUnitSystem: (unitSystem) => set({ unitSystem }),
@@ -396,17 +295,22 @@ export const useWellboreStore = create<WellboreStoreState>()(
           set({ bhaConfig: nextBha });
 
           if (get().isSagEnabled) {
-            const { activeWellId, azimuthCorrection, cachedMsaBz, applyCombinedCorrections } = get();
+            const { activeWellId, getActiveProposalAzimuth, rawStations, language, notify } = get();
             try {
-              const res = await triggerSagAnalysis(activeWellId, nextBha);
-              const newSagMap: Record<number, number> = {};
-              res.corrections.forEach((c) => {
-                newSagMap[c.station_id] = c.sag_correction_deg;
+              const remoteStations = await triggerSagAnalysis(activeWellId, nextBha);
+              const rawMap = new Map<number, SurveyStation>(rawStations.map((s) => [s.md, s]));
+              const mapped = remoteStations.map((s) => mapApiStationToLocal(s, rawMap));
+              set({
+                stations: calculateMinimumCurvature(mapped, getActiveProposalAzimuth()),
               });
-              set({ mwdcoreSagMap: newSagMap });
-              applyCombinedCorrections(azimuthCorrection, true, cachedMsaBz, newSagMap, nextBha);
-            } catch {
-              applyCombinedCorrections(azimuthCorrection, true, cachedMsaBz, get().mwdcoreSagMap, nextBha);
+            } catch (err: any) {
+              set({ isSagEnabled: false, stations: get().rawStations });
+              notify(
+                language === 'ru'
+                  ? `Ошибка перерасчета SAG на сервере: ${err?.message || 'Сервер недоступен'}`
+                  : `Server error updating SAG: ${err?.message || 'Server unavailable'}`,
+                'error'
+              );
             }
           }
         },
@@ -456,35 +360,71 @@ export const useWellboreStore = create<WellboreStoreState>()(
               set({ fields: normalizedHierarchy });
 
               const { activeWellId, getActiveProposalAzimuth } = get();
-              const remoteStations = await fetchWellStations(activeWellId);
-              if (remoteStations && remoteStations.length > 0) {
-                const mappedStations = remoteStations.map(mapApiStationToLocal);
-                const calculated = calculateMinimumCurvature(mappedStations, getActiveProposalAzimuth());
-                set({
-                  stations: calculated,
-                  rawStations: calculated,
-                  azimuthCorrection: 'none',
-                  isSagEnabled: false,
-                });
-              }
+
+              const rawList = await fetchWellStations(activeWellId, 'raw');
+              const mappedRaw = rawList.map((s) => mapApiStationToLocal(s));
+              const calculatedRaw = calculateMinimumCurvature(mappedRaw, getActiveProposalAzimuth());
+
+              const rawMap = new Map<number, SurveyStation>(calculatedRaw.map((s) => [s.md, s]));
+
+              const activeList = await fetchWellStations(activeWellId);
+              const mappedActive = activeList.map((s) => mapApiStationToLocal(s, rawMap));
+              const calculatedActive = calculateMinimumCurvature(mappedActive, getActiveProposalAzimuth());
+
+              const hasMsa = activeList.some((s) => s.correction_type?.includes('MSA'));
+              const hasSag = activeList.some((s) => s.correction_type?.includes('SAG'));
+              const hasScc = activeList.some((s) => s.correction_type?.includes('SCC'));
+
+              set({
+                rawStations: calculatedRaw,
+                stations: calculatedActive,
+                azimuthCorrection: hasMsa ? 'msa' : hasScc ? 'scc' : 'none',
+                isSagEnabled: hasSag,
+              });
             }
           } catch (err) {
-            console.warn('Backend service offline, running in local resilience mode:', err);
+            console.warn('Backend service offline:', err);
           }
         },
 
-        setActiveWellById: (wellId) => {
-          const newStns = wellStationsMap[wellId] || initialSurveyStations;
+        setActiveWellById: async (wellId) => {
           set({
             activeWellId: wellId,
-            stations: [...newStns],
-            rawStations: [...newStns],
             selectedStationId: null,
             msaResult: null,
-            mwdcoreSagMap: {},
             azimuthCorrection: 'none',
             isSagEnabled: false,
           });
+
+          try {
+            const { getActiveProposalAzimuth } = get();
+            const rawList = await fetchWellStations(wellId, 'raw');
+            const mappedRaw = rawList.map((s) => mapApiStationToLocal(s));
+            const calculatedRaw = calculateMinimumCurvature(mappedRaw, getActiveProposalAzimuth());
+
+            const rawMap = new Map<number, SurveyStation>(calculatedRaw.map((s) => [s.md, s]));
+
+            const activeList = await fetchWellStations(wellId);
+            const mappedActive = activeList.map((s) => mapApiStationToLocal(s, rawMap));
+            const calculatedActive = calculateMinimumCurvature(mappedActive, getActiveProposalAzimuth());
+
+            const hasMsa = activeList.some((s) => s.correction_type?.includes('MSA'));
+            const hasSag = activeList.some((s) => s.correction_type?.includes('SAG'));
+            const hasScc = activeList.some((s) => s.correction_type?.includes('SCC'));
+
+            set({
+              rawStations: calculatedRaw,
+              stations: calculatedActive,
+              azimuthCorrection: hasMsa ? 'msa' : hasScc ? 'scc' : 'none',
+              isSagEnabled: hasSag,
+            });
+          } catch {
+            const fallback = wellStationsMap[wellId] || initialSurveyStations;
+            set({
+              stations: [...fallback],
+              rawStations: [...fallback],
+            });
+          }
         },
 
         setSelectedStationId: (selectedStationId) => set({ selectedStationId }),
@@ -524,159 +464,195 @@ export const useWellboreStore = create<WellboreStoreState>()(
         },
 
         runMSA: async () => {
-          const {
-            azimuthCorrection,
-            isSagEnabled,
-            activeWellId,
-            rawStations,
-            geoRef,
-            msaConfig,
-            language,
-            notify,
-            applyCombinedCorrections,
-          } = get();
+          const { activeWellId, azimuthCorrection, getActiveProposalAzimuth, rawStations, language, notify, msaConfig } = get();
 
           if (azimuthCorrection === 'msa') {
-            set({ azimuthCorrection: 'none' });
-            applyCombinedCorrections('none', isSagEnabled);
-            notify(language === 'ru' ? 'Поправка MSA отключена' : 'MSA disabled', 'info');
+            try {
+              const remoteStations = await resetWellCorrections(activeWellId, 'msa');
+              const rawMap = new Map<number, SurveyStation>(rawStations.map((s) => [s.md, s]));
+              const mapped = remoteStations.map((s) => mapApiStationToLocal(s, rawMap));
+              const hasSag = remoteStations.some((s) => s.correction_type?.includes('SAG'));
+              set({
+                stations: calculateMinimumCurvature(mapped, getActiveProposalAzimuth()),
+                azimuthCorrection: 'none',
+                isSagEnabled: hasSag,
+              });
+              notify(language === 'ru' ? 'Поправка MSA отключена' : 'MSA disabled', 'info');
+            } catch (err: any) {
+              notify(language === 'ru' ? 'Ошибка отключения MSA' : 'Error disabling MSA', 'error');
+            }
             return;
           }
 
           set({ isCalculatingMSA: true });
           try {
-            const res = await triggerMsaAnalysis(activeWellId, {
+            const remoteStations = await triggerMsaAnalysis(activeWellId, {
               cma_generations: msaConfig.maxIter,
               max_iter: msaConfig.maxIter,
               enable_misalignment: msaConfig.enableMisalignment,
               enable_ref_corrections: msaConfig.enableRefCorrections,
             });
-            const bz = res.axial_bias_bz;
+            const rawMap = new Map<number, SurveyStation>(rawStations.map((s) => [s.md, s]));
+            const mapped = remoteStations.map((s) => mapApiStationToLocal(s, rawMap));
+            const hasSag = remoteStations.some((s) => s.correction_type?.includes('SAG'));
             set({
-              cachedMsaBz: bz,
-              msaResult: {
-                collarInterference: Math.round(bz),
-                sensorBiasZ: bz,
-                scaleFactorError: res.scale_factor_z,
-                iterations: res.iterations || 50,
-                convergenceRms: 0.12,
-                correctedStationsCount: res.stations_analyzed,
-              },
+              stations: calculateMinimumCurvature(mapped, getActiveProposalAzimuth()),
               azimuthCorrection: 'msa',
+              isSagEnabled: hasSag,
               isCalculatingMSA: false,
             });
-
-            applyCombinedCorrections('msa', isSagEnabled, bz);
-
+            notify(language === 'ru' ? 'MSA рассчитан' : 'MSA calculated', 'success');
+          } catch (err: any) {
+            set({ isCalculatingMSA: false });
             notify(
               language === 'ru'
-                ? `MSA (CMA-ES + TRF): ΔBz = ${bz} нТл (${res.stations_analyzed} замеров)`
-                : `MSA (CMA-ES + TRF): ΔBz = ${bz} nT (${res.stations_analyzed} stations)`,
-              'success'
-            );
-          } catch (err) {
-            console.warn('Backend MSA failed, using local optimization fallback:', err);
-            const { result } = runMultiStationAnalysis(rawStations, geoRef);
-            set({
-              cachedMsaBz: result.sensorBiasZ,
-              azimuthCorrection: 'msa',
-              isCalculatingMSA: false,
-            });
-
-            applyCombinedCorrections('msa', isSagEnabled, result.sensorBiasZ);
-
-            notify(
-              language === 'ru'
-                ? `MSA включен (локально): ΔBz = ${result.sensorBiasZ} нТл`
-                : `MSA active (local fallback): ΔBz = ${result.sensorBiasZ} nT`,
-              'info'
+                ? `Ошибка сервера при расчете MSA: ${err?.message || 'Сервер недоступен'}`
+                : `Server error during MSA calculation: ${err?.message || 'Server unavailable'}`,
+              'error'
             );
           }
         },
 
         runSAG: async () => {
-          const {
-            isSagEnabled,
-            activeWellId,
-            bhaConfig,
-            azimuthCorrection,
-            cachedMsaBz,
-            language,
-            notify,
-            applyCombinedCorrections,
-          } = get();
+          const { activeWellId, isSagEnabled, bhaConfig, getActiveProposalAzimuth, rawStations, language, notify } = get();
 
           if (isSagEnabled) {
-            set({ isSagEnabled: false });
-            applyCombinedCorrections(azimuthCorrection, false);
-            notify(language === 'ru' ? 'Поправка SAG выключена' : 'SAG disabled', 'info');
+            try {
+              const remoteStations = await resetWellCorrections(activeWellId, 'sag');
+              const rawMap = new Map<number, SurveyStation>(rawStations.map((s) => [s.md, s]));
+              const mapped = remoteStations.map((s) => mapApiStationToLocal(s, rawMap));
+              const hasMsa = remoteStations.some((s) => s.correction_type?.includes('MSA'));
+              const hasScc = remoteStations.some((s) => s.correction_type?.includes('SCC'));
+              set({
+                stations: calculateMinimumCurvature(mapped, getActiveProposalAzimuth()),
+                isSagEnabled: false,
+                azimuthCorrection: hasMsa ? 'msa' : hasScc ? 'scc' : 'none',
+              });
+              notify(language === 'ru' ? 'Поправка SAG отключена' : 'SAG disabled', 'info');
+            } catch (err: any) {
+              notify(language === 'ru' ? 'Ошибка отключения SAG' : 'Error disabling SAG', 'error');
+            }
             return;
           }
 
           set({ isCalculatingSAG: true });
           try {
-            const res = await triggerSagAnalysis(activeWellId, bhaConfig);
-            const newSagMap: Record<number, number> = {};
-            res.corrections.forEach((c) => {
-              newSagMap[c.station_id] = c.sag_correction_deg;
-            });
-
+            const remoteStations = await triggerSagAnalysis(activeWellId, bhaConfig);
+            const rawMap = new Map<number, SurveyStation>(rawStations.map((s) => [s.md, s]));
+            const mapped = remoteStations.map((s) => mapApiStationToLocal(s, rawMap));
+            const hasMsa = remoteStations.some((s) => s.correction_type?.includes('MSA'));
+            const hasScc = remoteStations.some((s) => s.correction_type?.includes('SCC'));
             set({
-              mwdcoreSagMap: newSagMap,
+              stations: calculateMinimumCurvature(mapped, getActiveProposalAzimuth()),
               isSagEnabled: true,
+              azimuthCorrection: hasMsa ? 'msa' : hasScc ? 'scc' : 'none',
               isCalculatingSAG: false,
             });
-
-            applyCombinedCorrections(azimuthCorrection, true, cachedMsaBz, newSagMap);
-
+            notify(language === 'ru' ? 'SAG рассчитан' : 'SAG calculated', 'success');
+          } catch (err: any) {
+            set({ isCalculatingSAG: false });
             notify(
               language === 'ru'
-                ? `SAG рассчитан через arrowell_engine (пик: ${res.peak_sag_deg}°, точек: ${res.stations_corrected})`
-                : `SAG computed via arrowell_engine (peak: ${res.peak_sag_deg}°, stations: ${res.stations_corrected})`,
-              'success'
-            );
-          } catch (err) {
-            console.warn('Backend SAG failed, using beam mechanics fallback:', err);
-            set({
-              isSagEnabled: true,
-              isCalculatingSAG: false,
-            });
-
-            applyCombinedCorrections(azimuthCorrection, true);
-
-            const sagPeak = calculatePhysicalSagAngle(bhaConfig);
-            notify(
-              language === 'ru'
-                ? `SAG включен (локально, расчетный пик: ${sagPeak}°)`
-                : `SAG active (local fallback, peak: ${sagPeak}°)`,
-              'info'
+                ? `Ошибка сервера при расчете SAG: ${err?.message || 'Сервер недоступен'}`
+                : `Server error during SAG calculation: ${err?.message || 'Server unavailable'}`,
+              'error'
             );
           }
         },
 
-        runSCC: () => {
-          const { azimuthCorrection, isSagEnabled, language, notify, applyCombinedCorrections } = get();
+        runSCC: async () => {
+          const { activeWellId, azimuthCorrection, getActiveProposalAzimuth, rawStations, language, notify } = get();
+
           if (azimuthCorrection === 'scc') {
-            set({ azimuthCorrection: 'none' });
-            applyCombinedCorrections('none', isSagEnabled);
-            notify(language === 'ru' ? 'Поправка SCC отключена' : 'SCC disabled', 'info');
+            try {
+              const remoteStations = await resetWellCorrections(activeWellId, 'scc');
+              const rawMap = new Map<number, SurveyStation>(rawStations.map((s) => [s.md, s]));
+              const mapped = remoteStations.map((s) => mapApiStationToLocal(s, rawMap));
+              const hasSag = remoteStations.some((s) => s.correction_type?.includes('SAG'));
+              set({
+                stations: calculateMinimumCurvature(mapped, getActiveProposalAzimuth()),
+                azimuthCorrection: 'none',
+                isSagEnabled: hasSag,
+              });
+              notify(language === 'ru' ? 'Поправка SCC отключена' : 'SCC disabled', 'info');
+            } catch (err: any) {
+              notify(language === 'ru' ? 'Ошибка отключения SCC' : 'Error disabling SCC', 'error');
+            }
             return;
           }
 
-          set({ azimuthCorrection: 'scc' });
-          applyCombinedCorrections('scc', isSagEnabled);
-          notify(language === 'ru' ? 'Поправка SCC включена' : 'SCC active', 'success');
+          set({ isCalculatingSCC: true });
+          try {
+            const remoteStations = await triggerSccAnalysis(activeWellId);
+            const rawMap = new Map<number, SurveyStation>(rawStations.map((s) => [s.md, s]));
+            const mapped = remoteStations.map((s) => mapApiStationToLocal(s, rawMap));
+            const hasSag = remoteStations.some((s) => s.correction_type?.includes('SAG'));
+            set({
+              stations: calculateMinimumCurvature(mapped, getActiveProposalAzimuth()),
+              azimuthCorrection: 'scc',
+              isSagEnabled: hasSag,
+              isCalculatingSCC: false,
+            });
+            notify(language === 'ru' ? 'SCC рассчитан' : 'SCC calculated', 'success');
+          } catch (err: any) {
+            set({ isCalculatingSCC: false });
+            notify(
+              language === 'ru'
+                ? `Ошибка сервера при расчете SCC: ${err?.message || 'Сервер недоступен'}`
+                : `Server error during SCC calculation: ${err?.message || 'Server unavailable'}`,
+              'error'
+            );
+          }
         },
 
-        resetSurveys: () => {
-          const { rawStations, language, notify } = get();
-          set({
-            azimuthCorrection: 'none',
-            isSagEnabled: false,
-            stations: [...rawStations],
-            msaResult: null,
-          });
-          notify(language === 'ru' ? 'Все поправки сброшены (режим Raw)' : 'All corrections reset (Raw)', 'info');
+        resetSurveys: async () => {
+          const { activeWellId, getActiveProposalAzimuth, language, notify } = get();
+          try {
+            const remoteStations = await resetWellCorrections(activeWellId, 'all');
+            const mappedRaw = remoteStations.map((s) => mapApiStationToLocal(s));
+            const calculatedRaw = calculateMinimumCurvature(mappedRaw, getActiveProposalAzimuth());
+
+            set({
+              rawStations: calculatedRaw,
+              stations: calculatedRaw,
+              azimuthCorrection: 'none',
+              isSagEnabled: false,
+              msaResult: null,
+            });
+            notify(language === 'ru' ? 'Все поправки сброшены к Raw' : 'All corrections reset to Raw', 'info');
+          } catch (err: any) {
+            notify(
+              language === 'ru'
+                ? `Ошибка сброса на сервере: ${err?.message || 'Сервер недоступен'}`
+                : `Server reset error: ${err?.message || 'Server unavailable'}`,
+              'error'
+            );
+          }
+        },
+
+        resetSurveys: async () => {
+          const { activeWellId, getActiveProposalAzimuth, language, notify } = get();
+          try {
+            const remoteStations = await resetWellCorrections(activeWellId);
+            const mappedRaw = remoteStations.map((s) => mapApiStationToLocal(s));
+            const calculatedRaw = calculateMinimumCurvature(mappedRaw, getActiveProposalAzimuth());
+
+            set({
+              rawStations: calculatedRaw,
+              stations: calculatedRaw,
+              azimuthCorrection: 'none',
+              isSagEnabled: false,
+              msaResult: null,
+            });
+            notify(language === 'ru' ? 'Все поправки сброшены к Raw' : 'All corrections reset to Raw', 'info');
+          } catch (err: any) {
+            notify(
+              language === 'ru'
+                ? `Ошибка сброса на сервере: ${err?.message || 'Сервер недоступен'}`
+                : `Server reset error: ${err?.message || 'Server unavailable'}`,
+              'error'
+            );
+          }
         },
 
         addStation: async (stn) => {
@@ -696,13 +672,20 @@ export const useWellboreStore = create<WellboreStoreState>()(
 
           try {
             await createWellStation(activeWellId, { md, inc, azim, sensor });
-            const remoteStations = await fetchWellStations(activeWellId);
-            const mapped = remoteStations.map(mapApiStationToLocal);
-            const calculated = calculateMinimumCurvature(mapped, getActiveProposalAzimuth());
+
+            const rawList = await fetchWellStations(activeWellId, 'raw');
+            const mappedRaw = rawList.map((s) => mapApiStationToLocal(s));
+            const calculatedRaw = calculateMinimumCurvature(mappedRaw, getActiveProposalAzimuth());
+
+            const rawMap = new Map<number, SurveyStation>(calculatedRaw.map((s) => [s.md, s]));
+
+            const activeList = await fetchWellStations(activeWellId);
+            const mappedActive = activeList.map((s) => mapApiStationToLocal(s, rawMap));
+            const calculatedActive = calculateMinimumCurvature(mappedActive, getActiveProposalAzimuth());
 
             set({
-              rawStations: calculated,
-              stations: calculated,
+              rawStations: calculatedRaw,
+              stations: calculatedActive,
               azimuthCorrection: 'none',
               isSagEnabled: false,
             });
@@ -711,8 +694,13 @@ export const useWellboreStore = create<WellboreStoreState>()(
               language === 'ru' ? `Замер на ${md} м сохранен в DuckDB` : `Station at ${md} m saved to DuckDB`,
               'success'
             );
-          } catch (err) {
-            console.warn('Backend offline, saving station in local buffer:', err);
+          } catch (err: any) {
+            notify(
+              language === 'ru'
+                ? `Ошибка сервера при добавлении замера: ${err?.message || 'Сервер недоступен'}`
+                : `Server error adding survey station: ${err?.message || 'Server unavailable'}`,
+              'error'
+            );
           }
         },
 
@@ -720,20 +708,30 @@ export const useWellboreStore = create<WellboreStoreState>()(
           const { activeWellId, getActiveProposalAzimuth, language, notify } = get();
           try {
             await deleteWellStation(activeWellId, id);
-            const remoteStations = await fetchWellStations(activeWellId);
-            const mapped = remoteStations.map(mapApiStationToLocal);
-            const calculated = calculateMinimumCurvature(mapped, getActiveProposalAzimuth());
+
+            const rawList = await fetchWellStations(activeWellId, 'raw');
+            const mappedRaw = rawList.map((s) => mapApiStationToLocal(s));
+            const calculatedRaw = calculateMinimumCurvature(mappedRaw, getActiveProposalAzimuth());
+
+            const rawMap = new Map<number, SurveyStation>(calculatedRaw.map((s) => [s.md, s]));
+
+            const activeList = await fetchWellStations(activeWellId);
+            const mappedActive = activeList.map((s) => mapApiStationToLocal(s, rawMap));
+            const calculatedActive = calculateMinimumCurvature(mappedActive, getActiveProposalAzimuth());
 
             set({
-              rawStations: calculated,
-              stations: calculated,
-              azimuthCorrection: 'none',
-              isSagEnabled: false,
+              rawStations: calculatedRaw,
+              stations: calculatedActive,
             });
 
             notify(language === 'ru' ? 'Замер удален из DuckDB' : 'Station deleted from DuckDB', 'info');
-          } catch (err) {
-            console.warn('Backend offline, deleting station locally:', err);
+          } catch (err: any) {
+            notify(
+              language === 'ru'
+                ? `Ошибка сервера при удалении замера: ${err?.message || 'Сервер недоступен'}`
+                : `Server error deleting survey station: ${err?.message || 'Server unavailable'}`,
+              'error'
+            );
           }
         },
 

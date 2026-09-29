@@ -1,5 +1,3 @@
-"""Integration test for Multi-Station Analysis (MSA) parameter estimation via SciPy."""
-
 import math
 
 import numpy as np
@@ -15,7 +13,6 @@ def forward_mwd_sensors(
     dip_deg: float = 77.0,
     g_total: float = 1.0,
 ) -> tuple[float, float, float, float, float, float]:
-    """Helper for 3D forward projection of gravity and magnetic field vectors."""
     inc, azim, tf, dip = map(math.radians, (inc_deg, azim_deg, gtf_deg, dip_deg))
     sini, cosi = math.sin(inc), math.cos(inc)
     sina, cosa = math.sin(azim), math.cos(azim)
@@ -34,7 +31,6 @@ def forward_mwd_sensors(
 
 
 def test_msa_recovery_of_synthetic_interference():
-    """Verify that Differential Evolution decouples synthetic +650 nT drillstring bias."""
     true_b_ref = 58000.0
     true_dip_ref = 77.0
     synthetic_mbz = 650.0
@@ -65,8 +61,8 @@ def test_msa_recovery_of_synthetic_interference():
         dip_ref_deg=true_dip_ref,
         enable_misalignment=False,
         enable_ref_corrections=False,
-        max_iter=150,
+        cma_generations=150,
     )
 
     error_mbz = abs(result.params.mbz - synthetic_mbz)
-    assert error_mbz < 50.0, f"MSA recovery deviation too large: {error_mbz} nT"
+    assert error_mbz < 50.0

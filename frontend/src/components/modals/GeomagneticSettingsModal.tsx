@@ -226,7 +226,7 @@ export const GeomagneticSettingsModal: React.FC<SettingsModalProps> = ({ isOpen,
         </div>
 
         <div className="modal-body">
-          <nav className="modal-nav">
+          <nav className="modal-nav !w-[236px]">
             <button
               type="button"
               onClick={() => setActiveTab('location')}
@@ -234,7 +234,7 @@ export const GeomagneticSettingsModal: React.FC<SettingsModalProps> = ({ isOpen,
             >
               <MapPin />
               <div>
-                <div className="nav-title">{isRu ? 'Устье и датум' : 'Wellhead & Datum'}</div>
+                <div className="nav-title whitespace-nowrap">{isRu ? 'Устье и датум' : 'Wellhead & Datum'}</div>
                 <div className="nav-sub">WGS-84, RKB, GL</div>
               </div>
             </button>
@@ -246,7 +246,7 @@ export const GeomagneticSettingsModal: React.FC<SettingsModalProps> = ({ isOpen,
             >
               <Compass />
               <div>
-                <div className="nav-title">{isRu ? 'Геомагнитная модель' : 'Geomagnetic Model'}</div>
+                <div className="nav-title whitespace-nowrap">{isRu ? 'Геомагнитная модель' : 'Geomagnetic Model'}</div>
                 <div className="nav-sub">WMM 2025 Ref</div>
               </div>
             </button>
@@ -258,7 +258,7 @@ export const GeomagneticSettingsModal: React.FC<SettingsModalProps> = ({ isOpen,
             >
               <Layers />
               <div>
-                <div className="nav-title">{isRu ? 'КНБК и прогиб' : 'BHA & Sag Deflection'}</div>
+                <div className="nav-title whitespace-nowrap">{isRu ? 'КНБК и прогиб' : 'BHA & Sag Deflection'}</div>
                 <div className="nav-sub">Euler-Bernoulli</div>
               </div>
             </button>
@@ -270,7 +270,7 @@ export const GeomagneticSettingsModal: React.FC<SettingsModalProps> = ({ isOpen,
             >
               <Cpu />
               <div>
-                <div className="nav-title">{isRu ? 'Решатель MSA' : 'MSA Solver Engine'}</div>
+                <div className="nav-title whitespace-nowrap">{isRu ? 'Решатель MSA' : 'MSA Solver Engine'}</div>
                 <div className="nav-sub">CMA-ES + TRF Hybrid</div>
               </div>
             </button>
@@ -402,8 +402,8 @@ export const GeomagneticSettingsModal: React.FC<SettingsModalProps> = ({ isOpen,
 
               {activeTab === 'geomag' && (
                 <>
-                  <div className="preset-bar">
-                    <div>
+                  <div className="preset-bar !items-end gap-3">
+                    <div className="field flex-1 max-w-sm">
                       <label className="field-label">
                         {isRu ? 'Геомагнитный стандарт' : 'Geomagnetic Standard'}
                       </label>
@@ -434,7 +434,7 @@ export const GeomagneticSettingsModal: React.FC<SettingsModalProps> = ({ isOpen,
                       type="button"
                       onClick={handleAutoCalculateGeomag}
                       disabled={isAutoCalculating}
-                      className="btn"
+                      className="btn h-[30px] flex items-center gap-1.5"
                     >
                       <Sparkles
                         className={`w-3.5 h-3.5 text-[var(--accent)] ${

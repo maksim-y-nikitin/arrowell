@@ -40,6 +40,10 @@ export const SurveyLogTable: React.FC = () => {
     }
   };
 
+  const rawMap = useMemo(() => {
+    return new Map<number, SurveyStation>(rawStations.map((r) => [r.md, r]));
+  }, [rawStations]);
+
   const filteredStations = useMemo(() => {
     return stations
       .filter((s) => {
@@ -184,22 +188,11 @@ export const SurveyLogTable: React.FC = () => {
               const isSelected = selectedStationId === stn.id;
               const isExpanded = expandedRowId === stn.id;
 
-              const raw =
-                rawStations.find((r) => r.id === stn.id) ||
-                stn.rawValues || {
-                  inc: stn.inc,
-                  azim: stn.azim,
-                  tvd: stn.tvd,
-                  northing: stn.northing,
-                  easting: stn.easting,
-                  bTotal: stn.bTotal,
-                  gTotal: stn.gTotal,
-                  dipAngle: stn.dipAngle,
-                };
+              const raw = rawMap.get(stn.md) || stn.rawValues || stn;
 
-              const rawN   = (raw as any).northing ?? stn.rawValues?.northing ?? stn.northing;
-              const rawE   = (raw as any).easting  ?? stn.rawValues?.easting  ?? stn.easting;
-              const rawTvd = (raw as any).tvd      ?? stn.rawValues?.tvd      ?? stn.tvd;
+              const rawN   = raw.northing ?? stn.northing;
+              const rawE   = raw.easting  ?? stn.easting;
+              const rawTvd = raw.tvd      ?? stn.tvd;
               const rawInc  = raw.inc;
               const rawAzim = raw.azim;
 

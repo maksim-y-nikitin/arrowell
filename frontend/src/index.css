@@ -856,7 +856,7 @@ input, select, textarea {
 }
 
 .modal-nav {
-  width: 210px;
+  width: 236px;
   padding: var(--s2);
   display: flex;
   flex-direction: column;
@@ -1025,8 +1025,9 @@ input, select, textarea {
 
 .preset-bar {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   justify-content: space-between;
+  gap: var(--s3);
   padding: 10px var(--s3);
   border: 1px solid var(--line);
   border-radius: var(--r2);

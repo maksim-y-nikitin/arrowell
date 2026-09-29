@@ -26,27 +26,29 @@ export const WorkspaceRibbon: React.FC<RibbonProps> = ({
     resetSurveys,
     isCalculatingMSA,
     isCalculatingSAG,
+    isCalculatingSCC,
   } = useWellbore();
+
+  const isBusy = isCalculatingMSA || isCalculatingSAG || isCalculatingSCC;
 
   return (
     <div className="actionbar">
-      {/* Group 1: Azimuth */}
       <div className="group">
         <span className="group-label">Azimuth</span>
         <div className="seg">
           <button
             onClick={resetSurveys}
-            disabled={isCalculatingMSA || isCalculatingSAG}
+            disabled={isBusy}
             className={azimuthCorrection === 'none' ? 'on' : ''}
           >
             Raw
           </button>
           <button
             onClick={runMSA}
-            disabled={isCalculatingMSA}
+            disabled={isBusy}
             className={azimuthCorrection === 'msa' ? 'on acc' : ''}
           >
-            <span>{isCalculatingMSA ? 'MSA' : 'MSA'}</span>
+            <span>MSA</span>
             {isCalculatingMSA ? (
               <span className="led pulse text-[var(--warn)]" />
             ) : azimuthCorrection === 'msa' ? (
@@ -55,27 +57,30 @@ export const WorkspaceRibbon: React.FC<RibbonProps> = ({
           </button>
           <button
             onClick={runSCC}
-            disabled={isCalculatingMSA || isCalculatingSAG}
+            disabled={isBusy}
             className={azimuthCorrection === 'scc' ? 'on acc' : ''}
           >
             <span>SCC</span>
-            {azimuthCorrection === 'scc' && <span className="led text-[var(--accent)]" />}
+            {isCalculatingSCC ? (
+              <span className="led pulse text-[var(--warn)]" />
+            ) : azimuthCorrection === 'scc' ? (
+              <span className="led text-[var(--accent)]" />
+            ) : null}
           </button>
         </div>
       </div>
 
       <div className="group-sep"></div>
 
-      {/* Group 2: Inclination */}
       <div className="group">
         <span className="group-label">Inclination</span>
         <div className="seg">
           <button
             onClick={runSAG}
-            disabled={isCalculatingSAG}
+            disabled={isBusy}
             className={isSagEnabled ? 'on okc' : ''}
           >
-            <span>{isCalculatingSAG ? 'SAG' : 'SAG'}</span>
+            <span>SAG</span>
             <span
               className={`led ${
                 isCalculatingSAG
@@ -91,7 +96,6 @@ export const WorkspaceRibbon: React.FC<RibbonProps> = ({
 
       <div className="group-sep"></div>
 
-      {/* Group 3: Core Actions */}
       <div className="group">
         <button
           onClick={() => setShowDeltaDiff((prev) => !prev)}
@@ -118,10 +122,8 @@ export const WorkspaceRibbon: React.FC<RibbonProps> = ({
         </button>
       </div>
 
-      {/* Spacer pushes Settings to the far right */}
       <div className="flex-1" />
 
-      {/* Group 4: Settings (Right-aligned) */}
       <div className="group">
         <button
           onClick={onOpenGeoModal}

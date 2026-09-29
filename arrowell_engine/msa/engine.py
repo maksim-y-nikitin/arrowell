@@ -1,12 +1,3 @@
-"""High-performance Multi-Station Analysis (MSA) calibration engine.
-
-Pipeline:
-  1. ISCWSA Bayesian Regularization: scales parameters into whitened space (u = p / sigma).
-  2. CMA-ES: global exploration along ill-conditioned, non-linear sensor ravines (12 candidates/gen).
-  3. TRF (Trust Region Reflective): local quadratic polish on the ravine floor with physical sanity bounds.
-  4. Posterior Covariance: analytical evaluation of calibration parameter uncertainties via Jacobian.
-"""
-
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
@@ -40,7 +31,6 @@ class MsaResult:
 
 
 def analyze_toolface_coverage(raw_dni: np.ndarray) -> Tuple[float, bool]:
-    """Evaluate toolface distribution to prevent ill-conditioned cross-sensor calibration."""
     gx = raw_dni[:, 0]
     gy = raw_dni[:, 1]
     gtf_deg = np.degrees(np.arctan2(-gx, -gy)) % 360.0
@@ -64,18 +54,17 @@ def _get_iscwsa_prior_sigmas(
     enable_misalignment: bool = True,
     enable_ref_corrections: bool = True,
 ) -> np.ndarray:
-    """1-sigma a priori uncertainties from standard ISCWSA Rev 4 / Rev 5 models."""
     g_scale = 1.0 / 9.80665 if g_ref < 5.0 else 1.0
 
-    sigma_ab = 0.004 * g_scale       # Accel biases (0.004 m/s^2)
-    sigma_as = 0.0005                # Accel scale factor (0.05%)
-    sigma_mb_xy = 70.0               # Mag cross biases (70 nT)
-    sigma_mb_z = 220.0               # Axial drillstring magnetization AMIL (220 nT)
-    sigma_ms = 0.0016                # Mag scale factor (0.16%)
-    sigma_align = 0.10 * DEG_TO_RAD  # Misalignment angles (0.10 deg)
-    sigma_dg = 0.0015 * g_scale      # Reference gravity delta
-    sigma_db = 60.0                  # Reference magnetic field delta (nT)
-    sigma_ddip = 0.10                # Reference dip delta (deg)
+    sigma_ab = 0.004 * g_scale
+    sigma_as = 0.0005
+    sigma_mb_xy = 70.0
+    sigma_mb_z = 2000.0
+    sigma_ms = 0.0016
+    sigma_align = 0.10 * DEG_TO_RAD
+    sigma_dg = 0.0015 * g_scale
+    sigma_db = 60.0
+    sigma_ddip = 0.10
 
     return np.array([
         sigma_ab, sigma_ab, sigma_ab,
@@ -97,22 +86,17 @@ def _get_soft_physical_bounds(
     enable_misalignment: bool,
     enable_ref_corrections: bool,
 ) -> Tuple[np.ndarray, np.ndarray]:
-    """Maximally soft common-sense hardware box constraints (Sanity Bounds)."""
     g_scale = 1.0 if g_ref < 5.0 else 9.80665
 
-    # Accelerometers: +/- 0.05 g (~0.5 m/s^2)
     ab_lim = 0.05 * g_scale
-    as_lim = 0.03  # +/- 3%
+    as_lim = 0.03
 
-    # Magnetometers:
-    mb_xy_lim = 500.0 if is_cross_mag_solvable else 50.0  # Guard against unobservable slide mode
-    mb_z_lim = 5000.0                                      # Extreme axial drillstring magnetization
-    ms_lim = 0.05                                          # +/- 5%
+    mb_xy_lim = 500.0 if is_cross_mag_solvable else 50.0
+    mb_z_lim = 5000.0
+    ms_lim = 0.05
 
-    # Alignment angles: +/- 2.0 deg
     align_lim = 2.0 * DEG_TO_RAD if enable_misalignment else 1e-6
 
-    # Geodetic reference field deltas:
     dg_lim = 0.01 * g_scale if enable_ref_corrections else 1e-6
     db_lim = 1500.0 if enable_ref_corrections else 1e-6
     ddip_lim = 3.0 if enable_ref_corrections else 1e-6
@@ -140,7 +124,6 @@ def _compute_normalized_msa_residuals(
     sigma_b: float,
     sigma_dip: float,
 ) -> np.ndarray:
-    """Compute normalized vector residuals: [measurement_residuals, ISCWSA_prior_penalties]."""
     p = u * prior_sigmas
 
     sensor_params = p[:15]
@@ -167,15 +150,12 @@ def _compute_normalized_msa_residuals(
     res_b = (b_tot - eff_b) / sigma_b
     res_dip = (dip_deg - eff_dip) / sigma_dip
 
-    # Bayesian ISCWSA MAP penalty: ||u||^2
     res_prior = u
 
     return np.concatenate([res_g, res_b, res_dip, res_prior])
 
 
 class _VectorizedCmaEs:
-    """Lightweight, vectorized (mu/mu_w, lambda)-CMA-ES solver for ravine exploration."""
-
     def __init__(
         self,
         x0: np.ndarray,
@@ -193,14 +173,12 @@ class _VectorizedCmaEs:
         self.max_iter = max_iter
         self.rng = np.random.default_rng(seed)
 
-        # Standard CMA-ES population and recombination parameters
-        self.lambda_ = 4 + int(3.0 * np.log(self.n))  # 12 candidates for N=18
+        self.lambda_ = 4 + int(3.0 * np.log(self.n))
         self.mu = self.lambda_ // 2
         weights = np.log(self.mu + 0.5) - np.log(np.arange(1, self.mu + 1))
         self.weights = weights / np.sum(weights)
         self.mueff = 1.0 / np.sum(self.weights**2)
 
-        # Adaptation rates
         self.cc = (4.0 + self.mueff / self.n) / (self.n + 4.0 + 2.0 * self.mueff / self.n)
         self.cs = (self.mueff + 2.0) / (self.n + self.mueff + 5.0)
         self.c1 = 2.0 / ((self.n + 1.3) ** 2 + self.mueff)
@@ -211,7 +189,6 @@ class _VectorizedCmaEs:
         self.damps = 1.0 + 2.0 * max(0.0, np.sqrt((self.mueff - 1.0) / (self.n + 1.0)) - 1.0) + self.cs
         self.chi_n = np.sqrt(self.n) * (1.0 - 1.0 / (4.0 * self.n) + 1.0 / (21.0 * self.n**2))
 
-        # Dynamic state
         self.pc = np.zeros(self.n, dtype=np.float64)
         self.ps = np.zeros(self.n, dtype=np.float64)
         self.B = np.eye(self.n, dtype=np.float64)
@@ -225,7 +202,6 @@ class _VectorizedCmaEs:
         counteval = 0
 
         for gen in range(self.max_iter):
-            # Sample candidate population: x_k = m + sigma * B * D * z_k
             z = self.rng.standard_normal((self.lambda_, self.n))
             y = z @ np.diag(self.D) @ self.B.T
             candidates = self.m + self.sigma * y
@@ -251,17 +227,14 @@ class _VectorizedCmaEs:
                 self.best_cost = float(costs[0])
                 self.best_x = np.clip(candidates[0], self.lb, self.ub)
 
-            # Recombination
             z_w = np.sum(self.weights[:, np.newaxis] * z[: self.mu], axis=0)
             y_w = self.B @ np.diag(self.D) @ z_w
             self.m += self.sigma * y_w
 
-            # Step-size adaptation
             self.ps = (1.0 - self.cs) * self.ps + np.sqrt(self.cs * (2.0 - self.cs) * self.mueff) * (self.B @ z_w)
             norm_ps = np.linalg.norm(self.ps)
             self.sigma *= np.exp((self.cs / self.damps) * (norm_ps / self.chi_n - 1.0))
 
-            # Covariance matrix adaptation (rank-1 and rank-mu updates)
             hsig = 1.0 if (norm_ps / np.sqrt(1.0 - (1.0 - self.cs) ** (2 * (gen + 1)))) < (
                 (1.4 + 2.0 / (self.n + 1.0)) * self.chi_n
             ) else 0.0
@@ -280,7 +253,6 @@ class _VectorizedCmaEs:
                 + self.cmu * c_rank_mu
             )
 
-            # Eigendecomposition of C
             if gen % max(1, self.n // 10) == 0:
                 self.C = np.triu(self.C) + np.triu(self.C, 1).T
                 eigenvals, self.B = np.linalg.eigh(self.C)
@@ -297,23 +269,13 @@ def run_msa_optimization(
     enable_misalignment: bool = True,
     enable_ref_corrections: bool = True,
     cma_generations: int = 70,
+    max_iter: Optional[int] = None,
     seed: int = 42,
+    **kwargs,
 ) -> MsaResult:
-    """Calibrate MWD sensors via CMA-ES global ravine exploration and TRF local refinement.
+    if max_iter is not None:
+        cma_generations = max_iter
 
-    Args:
-        raw_dni: Raw sensor measurement matrix of shape (N, 6) [gx, gy, gz, bx, by, bz].
-        g_ref: Reference gravity magnitude (~1.0 g or ~9.81 m/s^2).
-        b_ref: Reference magnetic field magnitude in nanoTesla.
-        dip_ref_deg: Reference magnetic dip angle in degrees.
-        enable_misalignment: Whether to calibrate sensor chassis misalignments.
-        enable_ref_corrections: Whether to calibrate local reference field deltas.
-        cma_generations: Maximum generations budget for CMA-ES (default 70).
-        seed: Random seed for deterministic reproducibility.
-
-    Returns:
-        MsaResult with calibrated parameters, posterior uncertainties, and QC flags.
-    """
     n_surveys = raw_dni.shape[0]
     if n_surveys < 4:
         raise ValueError("At least 4 survey stations are required for MSA convergence.")
@@ -324,7 +286,6 @@ def run_msa_optimization(
     sigma_b = 80.0
     sigma_dip = 0.15
 
-    # 1. Priors and soft sanity box constraints
     sigmas_prior = _get_iscwsa_prior_sigmas(
         g_ref=g_ref,
         enable_misalignment=enable_misalignment,
@@ -354,7 +315,6 @@ def run_msa_optimization(
         )
         return float(np.sum(res**2))
 
-    # --- ЭТАП 1: Глобальная разведка дна оврага через CMA-ES ---
     cma = _VectorizedCmaEs(
         x0=np.zeros(18, dtype=np.float64),
         sigma0=1.0,
@@ -365,7 +325,6 @@ def run_msa_optimization(
     )
     u_cma_best, _, cma_evals = cma.optimize(scalar_cma_objective)
 
-    # --- ЭТАП 2: Квадратичный локальный спуск через TRF ---
     u_trf_init = np.clip(u_cma_best, u_lower + 1e-5, u_upper - 1e-5)
 
     trf_res = least_squares(
@@ -396,12 +355,10 @@ def run_msa_optimization(
 
     p_best = u_best * sigmas_prior
 
-    # Контроль достижения границ (Sanity Check)
     at_lower = np.isclose(u_best, u_lower, rtol=1e-3, atol=1e-3)
     at_upper = np.isclose(u_best, u_upper, rtol=1e-3, atol=1e-3)
     hit_boundary = bool(np.any(at_lower | at_upper))
 
-    # Расчет апостериорной неопределенности: Cov(p) = diag(sigma) * inv(J^T * J) * diag(sigma)
     param_uncertainties = None
     try:
         jtj = trf_res.jac.T @ trf_res.jac

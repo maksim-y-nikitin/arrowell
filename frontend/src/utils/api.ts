@@ -66,6 +66,9 @@ export interface ApiEou {
 export interface ApiStation {
   id: number;
   well_id: string;
+  parent_station_id?: number | null;
+  survey_type?: string;
+  correction_type?: string | null;
   md: number;
   inc: number;
   azim: number;
@@ -93,39 +96,6 @@ export interface ApiStation {
   is_qc_pass: boolean;
   status: string;
   eou?: ApiEou;
-}
-
-export interface MsaResponse {
-  status: string;
-  axial_bias_bz: number;
-  cross_bias_bx: number;
-  cross_bias_by: number;
-  scale_factor_z: number;
-  misalignment_mxy: number;
-  stations_analyzed: number;
-  quality_assessment: {
-    accuracy: boolean;
-    expectation: boolean;
-    reference: boolean;
-  };
-}
-
-export interface SagStationCorrection {
-  station_id: number;
-  md: number;
-  raw_inc: number;
-  sag_correction_deg: number;
-  corrected_inc: number;
-  valid: boolean;
-}
-
-export interface SagResponse {
-  status: string;
-  well_id: string;
-  mud_weight_gcm3: number;
-  peak_sag_deg: number;
-  stations_corrected: number;
-  corrections: SagStationCorrection[];
 }
 
 export interface GeomagReferenceRequest {
@@ -160,8 +130,11 @@ export async function fetchHierarchy(): Promise<any[]> {
   return res.json();
 }
 
-export async function fetchWellStations(wellId: string): Promise<ApiStation[]> {
-  const res = await fetch(`${API_BASE_URL}/wells/${wellId}/stations`);
+export async function fetchWellStations(wellId: string, surveyType?: string): Promise<ApiStation[]> {
+  const url = surveyType
+    ? `${API_BASE_URL}/wells/${wellId}/stations?survey_type=${surveyType}`
+    : `${API_BASE_URL}/wells/${wellId}/stations`;
+  const res = await fetch(url);
   if (!res.ok) {
     throw new Error(`Failed to fetch stations for ${wellId}: ${res.statusText}`);
   }
@@ -212,7 +185,7 @@ export async function triggerMsaAnalysis(
     enable_misalignment?: boolean;
     enable_ref_corrections?: boolean;
   }
-): Promise<MsaResponse> {
+): Promise<ApiStation[]> {
   const res = await fetch(`${API_BASE_URL}/wells/${wellId}/run-msa`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -244,7 +217,7 @@ export async function triggerSagAnalysis(
     mudWeightGcm3: number;
     bhaMaterial: string;
   }
-): Promise<SagResponse> {
+): Promise<ApiStation[]> {
   const payload = {
     collar_od_mm: bhaConfig.collarOdMm,
     collar_id_mm: bhaConfig.collarIdMm,
@@ -260,8 +233,53 @@ export async function triggerSagAnalysis(
     body: JSON.stringify(payload),
   });
   if (!res.ok) {
-    throw new Error(`SAG calculation failed: ${res.statusText}`);
+    let errorDetail = res.statusText;
+    try {
+      const errJson = await res.json();
+      if (errJson?.detail) {
+        errorDetail = typeof errJson.detail === 'string' ? errJson.detail : JSON.stringify(errJson.detail);
+      }
+    } catch {
+    }
+    throw new Error(`SAG calculation failed (${res.status}): ${errorDetail}`);
   }
+  return res.json();
+}
+
+export async function triggerSccAnalysis(wellId: string): Promise<ApiStation[]> {
+  const res = await fetch(`${API_BASE_URL}/wells/${wellId}/run-scc`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  });
+
+  if (!res.ok) {
+    let errorDetail = res.statusText;
+    try {
+      const errJson = await res.json();
+      if (errJson?.detail) {
+        errorDetail = typeof errJson.detail === 'string' ? errJson.detail : JSON.stringify(errJson.detail);
+      }
+    } catch {
+    }
+    throw new Error(`SCC computation failed (${res.status}): ${errorDetail}`);
+  }
+
+  return res.json();
+}
+
+export async function resetWellCorrections(well_id: string, target?: string): Promise<ApiStation[]> {
+  const url = target
+    ? `${API_BASE_URL}/wells/${well_id}/reset-corrections?target=${target}`
+    : `${API_BASE_URL}/wells/${well_id}/reset-corrections`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  });
+
+  if (!res.ok) {
+    throw new Error(`Reset corrections failed: ${res.statusText}`);
+  }
+
   return res.json();
 }
 
@@ -275,24 +293,6 @@ export async function calculateGeomagReference(
   });
   if (!res.ok) {
     throw new Error(`Failed to calculate geomagnetic reference: ${res.statusText}`);
-  }
-  return res.json();
-}
-
-export async function calculateTrajectory(
-  stations: { md: number; inc: number; azim: number }[],
-  proposalAzimuth: number = 45.0
-) {
-  const res = await fetch(`${API_BASE_URL}/surveys/calculate-trajectory`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      proposal_azimuth: proposalAzimuth,
-      stations,
-    }),
-  });
-  if (!res.ok) {
-    throw new Error(`Trajectory calculation failed: ${res.statusText}`);
   }
   return res.json();
 }

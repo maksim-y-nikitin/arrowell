@@ -33,6 +33,10 @@ interface ChartScaleState {
 export const SensorQCStrip: React.FC = () => {
   const { stations, rawStations, geoRef } = useWellbore();
 
+  const rawMap = useMemo(() => {
+    return new Map<number, SurveyStation>(rawStations.map((r) => [r.md, r]));
+  }, [rawStations]);
+
   const bPassCount = stations.filter((s) => Math.abs(s.deltaB) <= geoRef.toleranceB).length;
   const gPassCount = stations.filter((s) => Math.abs(s.deltaG) <= geoRef.toleranceG).length;
   const dipPassCount = stations.filter((s) => Math.abs(s.deltaDip) <= geoRef.toleranceDip).length;
@@ -87,7 +91,7 @@ export const SensorQCStrip: React.FC = () => {
   }, [stations, rawStations, geoRef]);
 
   const bRawPath = stations
-    .map((s, i) => `${i === 0 ? 'M' : 'L'} ${getScaledX(s.md).toFixed(1)} ${getScaledY((rawStations.find((r) => r.id === s.id) || s).bTotal, bMin, bMax).toFixed(1)}`)
+    .map((s, i) => `${i === 0 ? 'M' : 'L'} ${getScaledX(s.md).toFixed(1)} ${getScaledY((rawMap.get(s.md) || s).bTotal, bMin, bMax).toFixed(1)}`)
     .join(' ');
 
   const bCorrPath = stations
@@ -95,7 +99,7 @@ export const SensorQCStrip: React.FC = () => {
     .join(' ');
 
   const gRawPath = stations
-    .map((s, i) => `${i === 0 ? 'M' : 'L'} ${getScaledX(s.md).toFixed(1)} ${getScaledY((rawStations.find((r) => r.id === s.id) || s).gTotal, gMin, gMax).toFixed(1)}`)
+    .map((s, i) => `${i === 0 ? 'M' : 'L'} ${getScaledX(s.md).toFixed(1)} ${getScaledY((rawMap.get(s.md) || s).gTotal, gMin, gMax).toFixed(1)}`)
     .join(' ');
 
   const gCorrPath = stations
@@ -103,7 +107,7 @@ export const SensorQCStrip: React.FC = () => {
     .join(' ');
 
   const dipRawPath = stations
-    .map((s, i) => `${i === 0 ? 'M' : 'L'} ${getScaledX(s.md).toFixed(1)} ${getScaledY((rawStations.find((r) => r.id === s.id) || s).dipAngle, dipMin, dipMax).toFixed(1)}`)
+    .map((s, i) => `${i === 0 ? 'M' : 'L'} ${getScaledX(s.md).toFixed(1)} ${getScaledY((rawMap.get(s.md) || s).dipAngle, dipMin, dipMax).toFixed(1)}`)
     .join(' ');
 
   const dipCorrPath = stations
@@ -130,7 +134,9 @@ export const SensorQCStrip: React.FC = () => {
             <Activity className="w-3.5 h-3.5 text-[var(--fg-2)]" />
             <span>Sensor Diagnostics</span>
           </div>
-          <span className="pill ok">All in spec</span>
+          <span className={`pill ${bPassCount === stations.length && gPassCount === stations.length && dipPassCount === stations.length ? 'ok' : 'warn'}`}>
+            {bPassCount === stations.length && gPassCount === stations.length && dipPassCount === stations.length ? 'All in spec' : 'Deviations detected'}
+          </span>
         </div>
         <span className="panel-sub">Hover for detail</span>
       </div>
@@ -142,7 +148,9 @@ export const SensorQCStrip: React.FC = () => {
               <Magnet className="w-3 h-3 text-[var(--accent)]" />
               <span>Btotal</span>
             </div>
-            <span className="pill ok">{bPassCount}/{stations.length}</span>
+            <span className={`pill ${bPassCount === stations.length ? 'ok' : 'warn'}`}>
+              {bPassCount}/{stations.length}
+            </span>
           </div>
           <div className="text-[10px] text-[var(--fg-2)]">
             Ref <b>{geoRef.bTotalRef.toLocaleString()} nT</b> ± {geoRef.toleranceB}
@@ -163,7 +171,9 @@ export const SensorQCStrip: React.FC = () => {
               <Activity className="w-3 h-3 text-[var(--ok)]" />
               <span>Gtotal</span>
             </div>
-            <span className="pill ok">{gPassCount}/{stations.length}</span>
+            <span className={`pill ${gPassCount === stations.length ? 'ok' : 'warn'}`}>
+              {gPassCount}/{stations.length}
+            </span>
           </div>
           <div className="text-[10px] text-[var(--fg-2)]">
             Ref <b>{geoRef.gTotalRef.toFixed(4)} g</b> ± {geoRef.toleranceG}
@@ -211,6 +221,22 @@ export const SensorQCDashboard: React.FC = () => {
 
   const containerRef = useRef<HTMLDivElement>(null);
   const [containerWidth, setContainerWidth] = useState<number>(1200);
+
+  const rawMap = useMemo(() => {
+    return new Map<number, SurveyStation>(rawStations.map((r) => [r.md, r]));
+  }, [rawStations]);
+
+  const bPassCount = useMemo(() => {
+    return stations.filter((s) => Math.abs(s.deltaB) <= geoRef.toleranceB).length;
+  }, [stations, geoRef.toleranceB]);
+
+  const gPassCount = useMemo(() => {
+    return stations.filter((s) => Math.abs(s.deltaG) <= geoRef.toleranceG).length;
+  }, [stations, geoRef.toleranceG]);
+
+  const dipPassCount = useMemo(() => {
+    return stations.filter((s) => Math.abs(s.deltaDip) <= geoRef.toleranceDip).length;
+  }, [stations, geoRef.toleranceDip]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -314,21 +340,21 @@ export const SensorQCDashboard: React.FC = () => {
   const getDipY = (dip: number) => padT + innerHeight - ((dip - dipMin) / (dipMax - dipMin || 1)) * innerHeight;
 
   const bRawPath = stations
-    .map((s, i) => `${i === 0 ? 'M' : 'L'} ${getBX(s.md).toFixed(1)} ${getBY((rawStations.find((r) => r.id === s.id) || s).bTotal).toFixed(1)}`)
+    .map((s, i) => `${i === 0 ? 'M' : 'L'} ${getBX(s.md).toFixed(1)} ${getBY((rawMap.get(s.md) || s).bTotal).toFixed(1)}`)
     .join(' ');
   const bCorrPath = stations
     .map((s, i) => `${i === 0 ? 'M' : 'L'} ${getBX(s.md).toFixed(1)} ${getBY(s.bTotal).toFixed(1)}`)
     .join(' ');
 
   const gRawPath = stations
-    .map((s, i) => `${i === 0 ? 'M' : 'L'} ${getGX(s.md).toFixed(1)} ${getGY((rawStations.find((r) => r.id === s.id) || s).gTotal).toFixed(1)}`)
+    .map((s, i) => `${i === 0 ? 'M' : 'L'} ${getGX(s.md).toFixed(1)} ${getGY((rawMap.get(s.md) || s).gTotal).toFixed(1)}`)
     .join(' ');
   const gCorrPath = stations
     .map((s, i) => `${i === 0 ? 'M' : 'L'} ${getGX(s.md).toFixed(1)} ${getGY(s.gTotal).toFixed(1)}`)
     .join(' ');
 
   const dipRawPath = stations
-    .map((s, i) => `${i === 0 ? 'M' : 'L'} ${getDipX(s.md).toFixed(1)} ${getDipY((rawStations.find((r) => r.id === s.id) || s).dipAngle).toFixed(1)}`)
+    .map((s, i) => `${i === 0 ? 'M' : 'L'} ${getDipX(s.md).toFixed(1)} ${getDipY((rawMap.get(s.md) || s).dipAngle).toFixed(1)}`)
     .join(' ');
   const dipCorrPath = stations
     .map((s, i) => `${i === 0 ? 'M' : 'L'} ${getDipX(s.md).toFixed(1)} ${getDipY(s.dipAngle).toFixed(1)}`)
@@ -344,7 +370,9 @@ export const SensorQCDashboard: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-3">
-            <span className="pill ok">{stations.length} in spec</span>
+            <span className={`pill ${bPassCount === stations.length ? 'ok' : 'warn'}`}>
+              {bPassCount} / {stations.length} in spec
+            </span>
 
             <div className="flex items-center gap-1 bg-[var(--bg-2)] p-0.5 rounded border border-[var(--line)] text-[10px]">
               <span className="text-[var(--fg-3)] px-1 font-sans">MD:</span>
@@ -379,6 +407,7 @@ export const SensorQCDashboard: React.FC = () => {
             {stations.map((s) => {
               const x = getBX(s.md);
               const y = getBY(s.bTotal);
+              const rawStn = rawMap.get(s.md) || s;
               return (
                 <circle
                   key={s.id}
@@ -393,8 +422,8 @@ export const SensorQCDashboard: React.FC = () => {
                     chart: 'btotal',
                     stnId: s.id,
                     station: s,
-                    rawStation: rawStations.find((r) => r.id === s.id) || s,
-                    rawVal: (rawStations.find((r) => r.id === s.id) || s).bTotal,
+                    rawStation: rawStn,
+                    rawVal: rawStn.bTotal,
                     corrVal: s.bTotal,
                     refVal: geoRef.bTotalRef,
                     tolVal: geoRef.toleranceB,
@@ -418,7 +447,9 @@ export const SensorQCDashboard: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-3">
-            <span className="pill ok">{stations.length} in spec</span>
+            <span className={`pill ${gPassCount === stations.length ? 'ok' : 'warn'}`}>
+              {gPassCount} / {stations.length} in spec
+            </span>
 
             <div className="flex items-center gap-1 bg-[var(--bg-2)] p-0.5 rounded border border-[var(--line)] text-[10px]">
               <span className="text-[var(--fg-3)] px-1 font-sans">MD:</span>
@@ -453,6 +484,7 @@ export const SensorQCDashboard: React.FC = () => {
             {stations.map((s) => {
               const x = getGX(s.md);
               const y = getGY(s.gTotal);
+              const rawStn = rawMap.get(s.md) || s;
               return (
                 <circle
                   key={s.id}
@@ -467,8 +499,8 @@ export const SensorQCDashboard: React.FC = () => {
                     chart: 'gtotal',
                     stnId: s.id,
                     station: s,
-                    rawStation: rawStations.find((r) => r.id === s.id) || s,
-                    rawVal: (rawStations.find((r) => r.id === s.id) || s).gTotal,
+                    rawStation: rawStn,
+                    rawVal: rawStn.gTotal,
                     corrVal: s.gTotal,
                     refVal: geoRef.gTotalRef,
                     tolVal: geoRef.toleranceG,
@@ -492,7 +524,9 @@ export const SensorQCDashboard: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-3">
-            <span className="pill warn">{stations.length} in spec</span>
+            <span className={`pill ${dipPassCount === stations.length ? 'ok' : 'warn'}`}>
+              {dipPassCount} / {stations.length} in spec
+            </span>
 
             <div className="flex items-center gap-1 bg-[var(--bg-2)] p-0.5 rounded border border-[var(--line)] text-[10px]">
               <span className="text-[var(--fg-3)] px-1 font-sans">MD:</span>
@@ -527,6 +561,7 @@ export const SensorQCDashboard: React.FC = () => {
             {stations.map((s) => {
               const x = getDipX(s.md);
               const y = getDipY(s.dipAngle);
+              const rawStn = rawMap.get(s.md) || s;
               return (
                 <circle
                   key={s.id}
@@ -541,8 +576,8 @@ export const SensorQCDashboard: React.FC = () => {
                     chart: 'dip',
                     stnId: s.id,
                     station: s,
-                    rawStation: rawStations.find((r) => r.id === s.id) || s,
-                    rawVal: (rawStations.find((r) => r.id === s.id) || s).dipAngle,
+                    rawStation: rawStn,
+                    rawVal: rawStn.dipAngle,
                     corrVal: s.dipAngle,
                     refVal: geoRef.dipRef,
                     tolVal: geoRef.toleranceDip,

@@ -1,5 +1,3 @@
-"""Initial database seeding script with realistic oilfield survey data."""
-
 import math
 from typing import List
 
@@ -19,19 +17,6 @@ def _generate_synthetic_telemetry(
     declination: float = 12.42,
     grid_convergence: float = 1.25,
 ) -> List[SurveyStationBase]:
-    """
-    Generate realistic directional surveys corrupted by drillstring magnetization and sensor noise.
-
-    Args:
-        station_count: Total number of survey stations to synthesize.
-        b_total_ref: Reference geomagnetic total field intensity in nanoTesla.
-        dip_ref: Reference geomagnetic dip angle in degrees.
-        declination: Magnetic declination angle in degrees.
-        grid_convergence: Grid convergence angle in degrees.
-
-    Returns:
-        List of synthesized SurveyStationBase instances with corrupted telemetry.
-    """
     stations: List[SurveyStationBase] = []
     rng = np.random.default_rng(seed=42)
 
@@ -128,12 +113,6 @@ def _generate_synthetic_telemetry(
 
 
 def seed_database(db: Session) -> None:
-    """
-    Check if the database is empty and populate it with initial sample wellbores and stations.
-
-    Args:
-        db: Scoped database session.
-    """
     existing_field = db.scalar(select(Field).limit(1))
     if existing_field is not None:
         return
@@ -207,6 +186,9 @@ def seed_database(db: Session) -> None:
     for stn in calc_res.stations:
         db_stn = SurveyStation(
             well_id="well-102h",
+            survey_type="raw",
+            parent_station_id=None,
+            correction_type=None,
             md=stn.md,
             inc=stn.inc,
             azim=stn.azim,

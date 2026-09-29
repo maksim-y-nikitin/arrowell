@@ -1,8 +1,9 @@
+import math
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -13,13 +14,14 @@ from arrowell_engine.geomag.service import GeomagneticReferenceService
 from core.database import get_db
 from core.settings import settings
 from crud.wellbore import (
+    clear_corrected_stations,
     create_survey_station,
     delete_survey_station,
     get_full_hierarchy,
     get_geomag_ref_by_pad_id,
     get_stations_by_well,
     get_well_by_id,
-    sync_well_trajectory,
+    sync_survey_set_trajectory,
 )
 from schemas.hierarchy import FieldResponse
 from schemas.survey import (
@@ -29,7 +31,7 @@ from schemas.survey import (
     EouResponseSchema,
     MsaConfigSchema,
     RawStationSensorSchema,
-    SagCalculationResponse,
+
     SurveyStationCreate,
     SurveyStationResponse,
 )
@@ -43,49 +45,54 @@ from services.directional import (
 router = APIRouter(prefix="/wells", tags=["Wells & Hierarchy"])
 
 
-@router.get("/hierarchy", response_model=List[FieldResponse], summary="Get full field hierarchy")
-def read_hierarchy(db: Session = Depends(get_db)):
-    return get_full_hierarchy(db)
-
-
-@router.get("/{well_id}/stations", response_model=List[SurveyStationResponse], summary="Get survey stations for a well")
-def read_well_stations(well_id: str, db: Session = Depends(get_db)):
+def _get_well_stations_response(
+    db: Session,
+    well_id: str,
+    survey_type: Optional[str] = None
+) -> List[SurveyStationResponse]:
     well = get_well_by_id(db, well_id)
     if not well:
         raise HTTPException(status_code=404, detail=f"Wellbore '{well_id}' not found")
 
-    db_stations = get_stations_by_well(db, well_id)
+    target_type = survey_type
+    if not target_type:
+        has_corrected = len(get_stations_by_well(db, well_id, survey_type="corrected")) > 0
+        target_type = "corrected" if has_corrected else "raw"
 
-    response_list = []
-    for s in db_stations:
-        response_list.append(
-            SurveyStationResponse(
-                id=s.id,
-                well_id=s.well_id,
-                md=s.md,
-                inc=s.inc,
-                azim=s.azim,
-                tvd=s.tvd,
-                northing=s.northing,
-                easting=s.easting,
-                dls=s.dls,
-                vs=s.vs,
-                closure_dist=s.closure_dist,
-                closure_azim=s.closure_azim,
-                sensor=RawStationSensorSchema(
-                    gx=s.gx, gy=s.gy, gz=s.gz,
-                    bx=s.bx, by=s.by, bz=s.bz,
-                ),
-                g_total=s.g_total,
-                b_total=s.b_total,
-                dip_angle=s.dip_angle,
-                delta_g=s.delta_g,
-                delta_b=s.delta_b,
-                delta_dip=s.delta_dip,
-                is_qc_pass=s.is_qc_pass,
-                status=s.status,
-            )
+    db_stations = get_stations_by_well(db, well_id, survey_type=target_type)
+
+    response_list = [
+        SurveyStationResponse(
+            id=s.id,
+            well_id=s.well_id,
+            parent_station_id=s.parent_station_id,
+            survey_type=s.survey_type,
+            correction_type=s.correction_type,
+            md=s.md,
+            inc=s.inc,
+            azim=s.azim,
+            tvd=s.tvd,
+            northing=s.northing,
+            easting=s.easting,
+            dls=s.dls,
+            vs=s.vs,
+            closure_dist=s.closure_dist,
+            closure_azim=s.closure_azim,
+            sensor=RawStationSensorSchema(
+                gx=s.gx, gy=s.gy, gz=s.gz,
+                bx=s.bx, by=s.by, bz=s.bz,
+            ),
+            g_total=s.g_total,
+            b_total=s.b_total,
+            dip_angle=s.dip_angle,
+            delta_g=s.delta_g,
+            delta_b=s.delta_b,
+            delta_dip=s.delta_dip,
+            is_qc_pass=s.is_qc_pass,
+            status=s.status,
         )
+        for s in db_stations
+    ]
 
     if len(response_list) >= 2:
         try:
@@ -116,7 +123,21 @@ def read_well_stations(well_id: str, db: Session = Depends(get_db)):
     return response_list
 
 
-@router.post("/{well_id}/run-msa", summary="Run real MSA correction via arrowell_engine")
+@router.get("/hierarchy", response_model=List[FieldResponse])
+def read_hierarchy(db: Session = Depends(get_db)):
+    return get_full_hierarchy(db)
+
+
+@router.get("/{well_id}/stations", response_model=List[SurveyStationResponse])
+def read_well_stations(
+    well_id: str,
+    survey_type: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+):
+    return _get_well_stations_response(db=db, well_id=well_id, survey_type=survey_type)
+
+
+@router.post("/{well_id}/run-msa", response_model=List[SurveyStationResponse])
 def execute_well_msa(
     well_id: str,
     payload: Optional[MsaConfigSchema] = None,
@@ -126,15 +147,11 @@ def execute_well_msa(
     if not well:
         raise HTTPException(status_code=404, detail=f"Wellbore '{well_id}' not found")
 
-    stations = read_well_stations(well_id, db)
-    if len(stations) < 4:
-        raise HTTPException(
-            status_code=400,
-            detail="Insufficient stations for MSA analysis (minimum 4 stations required)",
-        )
+    raw_stations = _get_well_stations_response(db=db, well_id=well_id, survey_type="raw")
+    if len(raw_stations) < 4:
+        raise HTTPException(status_code=400, detail="Minimum 4 raw stations required for MSA")
 
     geo_ref = get_geomag_ref_by_pad_id(db, well.pad_id)
-
     b_ref = geo_ref.b_total_ref if geo_ref else settings.DEFAULT_B_TOTAL_REF
     dip_ref = geo_ref.dip_ref if geo_ref else settings.DEFAULT_DIP_REF
     g_ref = geo_ref.g_total_ref if geo_ref else 1.0000
@@ -145,38 +162,244 @@ def execute_well_msa(
     cfg = payload or MsaConfigSchema()
     gens = cfg.cma_generations or cfg.max_iter or 70
 
-    try:
-        result = run_msa_mwdcore(
-            stations=stations,
-            b_total_ref=b_ref,
-            dip_ref_deg=dip_ref,
-            g_total_ref=g_ref,
-            declination_deg=dec,
-            grid_convergence_deg=grid,
-            geomag_model=model,
-            cma_generations=gens,
-            enable_misalignment=cfg.enable_misalignment,
-            enable_ref_corrections=cfg.enable_ref_corrections,
-        )
-        return result
-    except ValueError as err:
-        raise HTTPException(
-            status_code=422,
-            detail=f"MSA convergence failed: {str(err)}",
-        )
-    except Exception as err:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Internal telemetry solver error: {str(err)}",
-        )
+    msa_res = run_msa_mwdcore(
+        stations=raw_stations,
+        b_total_ref=b_ref,
+        dip_ref_deg=dip_ref,
+        g_total_ref=g_ref,
+        declination_deg=dec,
+        grid_convergence_deg=grid,
+        geomag_model=model,
+        cma_generations=gens,
+        enable_misalignment=cfg.enable_misalignment,
+        enable_ref_corrections=cfg.enable_ref_corrections,
+    )
+
+    cor_map = {item["id"]: item for item in msa_res.get("corrected_stations", [])}
+    bias_bz = float(msa_res.get("axial_bias_bz", 0.0))
+    bias_bx = float(msa_res.get("cross_bias_bx", 0.0))
+    bias_by = float(msa_res.get("cross_bias_by", 0.0))
+
+    db_active = get_stations_by_well(db, well_id, survey_type="corrected")
+    if not db_active:
+        db_raw = get_stations_by_well(db, well_id, survey_type="raw")
+        for raw_stn in db_raw:
+            cor_item = cor_map.get(raw_stn.id, {})
+            new_azim = cor_item.get("azim_cor", raw_stn.azim)
+            new_bz = round(raw_stn.bz - bias_bz, 1)
+            new_bx = round(raw_stn.bx - bias_bx, 1)
+            new_by = round(raw_stn.by - bias_by, 1)
+
+            create_survey_station(db, {
+                "well_id": well_id,
+                "parent_station_id": raw_stn.id,
+                "survey_type": "corrected",
+                "correction_type": "MSA",
+                "md": raw_stn.md,
+                "inc": raw_stn.inc,
+                "azim": new_azim,
+                "gx": raw_stn.gx,
+                "gy": raw_stn.gy,
+                "gz": raw_stn.gz,
+                "bx": new_bx,
+                "by": new_by,
+                "bz": new_bz,
+                "status": "MSA Corrected",
+            })
+    else:
+        for stn in db_active:
+            raw_id = stn.parent_station_id if stn.parent_station_id else stn.id
+            cor_item = cor_map.get(raw_id, {})
+            stn.azim = cor_item.get("azim_cor", stn.azim)
+            stn.bz = round(stn.bz - bias_bz, 1)
+            stn.bx = round(stn.bx - bias_bx, 1)
+            stn.by = round(stn.by - bias_by, 1)
+
+            prev_types = [p for p in (stn.correction_type or "").split("+") if p and p not in ("MSA", "SCC")]
+            prev_types.append("MSA")
+            stn.correction_type = "+".join(sorted(prev_types))
+            stn.status = f"{stn.correction_type} Applied"
+        db.commit()
+
+    prop_az = well.proposal_azimuth or 0.0
+    sync_survey_set_trajectory(db, well_id=well_id, survey_type="corrected", proposal_azimuth=prop_az)
+    return _get_well_stations_response(db=db, well_id=well_id, survey_type="corrected")
 
 
-@router.post(
-    "/{well_id}/stations",
-    response_model=SurveyStationResponse,
-    status_code=201,
-    summary="Add a new survey station and cascade trajectory recomputation",
-)
+@router.post("/{well_id}/run-sag", response_model=List[SurveyStationResponse])
+def execute_well_sag(
+    well_id: str,
+    payload: Optional[BhaConfigSchema] = None,
+    db: Session = Depends(get_db),
+):
+    well = get_well_by_id(db, well_id)
+    if not well:
+        raise HTTPException(status_code=404, detail=f"Wellbore '{well_id}' not found")
+
+    raw_stations = _get_well_stations_response(db=db, well_id=well_id, survey_type="raw")
+    if not raw_stations:
+        raise HTTPException(status_code=404, detail="No survey stations found")
+
+    bha_config = payload or BhaConfigSchema()
+    sag_res = calculate_well_sag_mwdcore(stations=raw_stations, bha_config=bha_config, well_id=well_id)
+    sag_map = {c.station_id: c.corrected_inc for c in sag_res.corrections}
+
+    db_active = get_stations_by_well(db, well_id, survey_type="corrected")
+    if not db_active:
+        db_raw = get_stations_by_well(db, well_id, survey_type="raw")
+        for raw_stn in db_raw:
+            create_survey_station(db, {
+                "well_id": well_id,
+                "parent_station_id": raw_stn.id,
+                "survey_type": "corrected",
+                "correction_type": "SAG",
+                "md": raw_stn.md,
+                "inc": sag_map.get(raw_stn.id, raw_stn.inc),
+                "azim": raw_stn.azim,
+                "gx": raw_stn.gx,
+                "gy": raw_stn.gy,
+                "gz": raw_stn.gz,
+                "bx": raw_stn.bx,
+                "by": raw_stn.by,
+                "bz": raw_stn.bz,
+                "status": "SAG Applied",
+            })
+    else:
+        for stn in db_active:
+            target_key = stn.parent_station_id if stn.parent_station_id else stn.id
+            if target_key in sag_map:
+                stn.inc = sag_map[target_key]
+                prev_types = [p for p in (stn.correction_type or "").split("+") if p and p != "SAG"]
+                prev_types.append("SAG")
+                stn.correction_type = "+".join(sorted(prev_types))
+                stn.status = f"{stn.correction_type} Applied"
+        db.commit()
+
+    prop_az = well.proposal_azimuth or 0.0
+    sync_survey_set_trajectory(db, well_id=well_id, survey_type="corrected", proposal_azimuth=prop_az)
+    return _get_well_stations_response(db=db, well_id=well_id, survey_type="corrected")
+
+
+@router.post("/{well_id}/run-scc", response_model=List[SurveyStationResponse])
+def execute_well_scc(well_id: str, db: Session = Depends(get_db)):
+    well = get_well_by_id(db, well_id)
+    if not well:
+        raise HTTPException(status_code=404, detail=f"Wellbore '{well_id}' not found")
+
+    geo_ref = get_geomag_ref_by_pad_id(db, well.pad_id)
+    b_ref = geo_ref.b_total_ref if geo_ref else settings.DEFAULT_B_TOTAL_REF
+    dec = geo_ref.declination if geo_ref else settings.DEFAULT_DECLINATION
+    grid = geo_ref.grid_convergence if geo_ref else settings.DEFAULT_GRID_CONVERGENCE
+    mag_grid_shift = dec - grid
+
+    db_raw = get_stations_by_well(db, well_id, survey_type="raw")
+    if not db_raw:
+        raise HTTPException(status_code=404, detail="No survey stations found")
+
+    raw_calc_map = {}
+    for raw_stn in db_raw:
+        b_xy_sq = raw_stn.bx**2 + raw_stn.by**2
+        diff = max(0.0, b_ref**2 - b_xy_sq)
+        sign = 1.0 if raw_stn.bz >= 0.0 else -1.0
+        cor_bz = round(sign * math.sqrt(diff), 1)
+
+        g_tot = math.sqrt(raw_stn.gx**2 + raw_stn.gy**2 + raw_stn.gz**2) or 1.0
+        ew = (raw_stn.gx * raw_stn.by - raw_stn.gy * raw_stn.bx) * g_tot
+        ns = cor_bz * (raw_stn.gx**2 + raw_stn.gy**2) - raw_stn.gz * (raw_stn.gx * raw_stn.bx + raw_stn.gy * raw_stn.by)
+
+        raw_mag_azim = math.degrees(math.atan2(ew, ns)) % 360.0
+        new_azim = round((raw_mag_azim + mag_grid_shift) % 360.0, 2)
+        raw_calc_map[raw_stn.id] = (new_azim, cor_bz)
+
+    db_active = get_stations_by_well(db, well_id, survey_type="corrected")
+    if not db_active:
+        for raw_stn in db_raw:
+            new_azim, cor_bz = raw_calc_map[raw_stn.id]
+            create_survey_station(db, {
+                "well_id": well_id,
+                "parent_station_id": raw_stn.id,
+                "survey_type": "corrected",
+                "correction_type": "SCC",
+                "md": raw_stn.md,
+                "inc": raw_stn.inc,
+                "azim": new_azim,
+                "gx": raw_stn.gx,
+                "gy": raw_stn.gy,
+                "gz": raw_stn.gz,
+                "bx": raw_stn.bx,
+                "by": raw_stn.by,
+                "bz": cor_bz,
+                "status": "SCC Applied",
+            })
+    else:
+        for stn in db_active:
+            raw_id = stn.parent_station_id if stn.parent_station_id else stn.id
+            if raw_id in raw_calc_map:
+                new_azim, cor_bz = raw_calc_map[raw_id]
+                stn.azim = new_azim
+                stn.bz = cor_bz
+
+                prev_types = [p for p in (stn.correction_type or "").split("+") if p and p not in ("MSA", "SCC")]
+                prev_types.append("SCC")
+                stn.correction_type = "+".join(sorted(prev_types))
+                stn.status = f"{stn.correction_type} Applied"
+        db.commit()
+
+    prop_az = well.proposal_azimuth or 0.0
+    sync_survey_set_trajectory(db, well_id=well_id, survey_type="corrected", proposal_azimuth=prop_az)
+    return _get_well_stations_response(db=db, well_id=well_id, survey_type="corrected")
+
+
+@router.post("/{well_id}/reset-corrections", response_model=List[SurveyStationResponse])
+def reset_well_corrections(
+    well_id: str,
+    target: Optional[str] = Query(None),
+    db: Session = Depends(get_db)
+):
+    well = get_well_by_id(db, well_id)
+    if not well:
+        raise HTTPException(status_code=404, detail=f"Wellbore '{well_id}' not found")
+
+    if not target or target == "all":
+        clear_corrected_stations(db, well_id)
+        return _get_well_stations_response(db=db, well_id=well_id, survey_type="raw")
+
+    db_active = get_stations_by_well(db, well_id, survey_type="corrected")
+    if not db_active:
+        return _get_well_stations_response(db=db, well_id=well_id, survey_type="raw")
+
+    db_raw_map = {r.id: r for r in get_stations_by_well(db, well_id, survey_type="raw")}
+
+    for stn in db_active:
+        raw_stn = db_raw_map.get(stn.parent_station_id)
+        if not raw_stn:
+            continue
+
+        prev_types = [p for p in (stn.correction_type or "").split("+") if p]
+        if target.upper() == "SAG":
+            stn.inc = raw_stn.inc
+            prev_types = [p for p in prev_types if p != "SAG"]
+        elif target.upper() in ("MSA", "SCC"):
+            stn.azim = raw_stn.azim
+            stn.bx = raw_stn.bx
+            stn.by = raw_stn.by
+            stn.bz = raw_stn.bz
+            prev_types = [p for p in prev_types if p not in ("MSA", "SCC")]
+
+        stn.correction_type = "+".join(sorted(prev_types))
+        stn.status = f"{stn.correction_type} Applied" if stn.correction_type else "Raw"
+
+    if all(not s.correction_type for s in db_active):
+        clear_corrected_stations(db, well_id)
+        return _get_well_stations_response(db=db, well_id=well_id, survey_type="raw")
+
+    db.commit()
+    prop_az = well.proposal_azimuth or 0.0
+    sync_survey_set_trajectory(db, well_id=well_id, survey_type="corrected", proposal_azimuth=prop_az)
+    return _get_well_stations_response(db=db, well_id=well_id, survey_type="corrected")
+
+
+@router.post("/{well_id}/stations", response_model=SurveyStationResponse, status_code=201)
 def add_well_station(
     well_id: str,
     payload: SurveyStationCreate,
@@ -191,8 +414,11 @@ def add_well_station(
     )
     sensor = payload.sensor or default_sensor
 
-    stn_dict = {
+    db_stn = create_survey_station(db, {
         "well_id": well_id,
+        "parent_station_id": None,
+        "survey_type": "raw",
+        "correction_type": None,
         "md": payload.md,
         "inc": payload.inc,
         "azim": payload.azim,
@@ -202,42 +428,16 @@ def add_well_station(
         "bx": sensor.bx,
         "by": sensor.by,
         "bz": sensor.bz,
-    }
-    db_stn = create_survey_station(db, stn_dict)
+        "status": "Raw",
+    })
 
-    prop_az = well.proposal_azimuth
-    updated_stations = sync_well_trajectory(db, well_id=well_id, proposal_azimuth=prop_az)
-    computed = next((s for s in updated_stations if s.id == db_stn.id), db_stn)
-
-    return SurveyStationResponse(
-        id=computed.id,
-        well_id=computed.well_id,
-        md=computed.md,
-        inc=computed.inc,
-        azim=computed.azim,
-        tvd=computed.tvd,
-        northing=computed.northing,
-        easting=computed.easting,
-        dls=computed.dls,
-        vs=computed.vs,
-        closure_dist=computed.closure_dist,
-        closure_azim=computed.closure_azim,
-        sensor=RawStationSensorSchema(
-            gx=computed.gx, gy=computed.gy, gz=computed.gz,
-            bx=computed.bx, by=computed.by, bz=computed.bz,
-        ),
-        g_total=computed.g_total,
-        b_total=computed.b_total,
-        dip_angle=computed.dip_angle,
-        delta_g=computed.delta_g,
-        delta_b=computed.delta_b,
-        delta_dip=computed.delta_dip,
-        is_qc_pass=computed.is_qc_pass,
-        status=computed.status,
-    )
+    prop_az = well.proposal_azimuth or 0.0
+    sync_survey_set_trajectory(db, well_id=well_id, survey_type="raw", proposal_azimuth=prop_az)
+    stations = _get_well_stations_response(db=db, well_id=well_id, survey_type="raw")
+    return next((s for s in stations if s.id == db_stn.id))
 
 
-@router.delete("/{well_id}/stations/{station_id}", summary="Delete survey station and resync trajectory")
+@router.delete("/{well_id}/stations/{station_id}")
 def remove_well_station(
     well_id: str,
     station_id: int,
@@ -245,34 +445,13 @@ def remove_well_station(
 ):
     success = delete_survey_station(db, station_id=station_id, well_id=well_id)
     if not success:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Station with ID {station_id} not found in well '{well_id}'",
-        )
+        raise HTTPException(status_code=404, detail="Station not found")
 
     well = get_well_by_id(db, well_id)
-    prop_az = well.proposal_azimuth if well else 0.0
-    sync_well_trajectory(db, well_id=well_id, proposal_azimuth=prop_az)
+    prop_az = well.proposal_azimuth or 0.0
+    sync_survey_set_trajectory(db, well_id=well_id, survey_type="raw", proposal_azimuth=prop_az)
+    sync_survey_set_trajectory(db, well_id=well_id, survey_type="corrected", proposal_azimuth=prop_az)
     return {"status": "success", "deleted_station_id": station_id}
-
-
-@router.post(
-    "/{well_id}/run-sag",
-    response_model=SagCalculationResponse,
-    summary="Calculate BHA gravity sag deflection using arrowell_engine",
-)
-def execute_well_sag(
-    well_id: str,
-    payload: Optional[BhaConfigSchema] = None,
-    db: Session = Depends(get_db),
-):
-    stations = read_well_stations(well_id, db)
-    if not stations:
-        raise HTTPException(status_code=404, detail=f"No survey stations found for well '{well_id}'")
-
-    bha_config = payload or BhaConfigSchema()
-    result = calculate_well_sag_mwdcore(stations=stations, bha_config=bha_config, well_id=well_id)
-    return result
 
 
 class GeomagCalcRequest(BaseModel):
@@ -296,7 +475,6 @@ class GeomagCalcResponse(BaseModel):
 @router.post(
     "/calculate-geomag-reference",
     response_model=GeomagCalcResponse,
-    summary="Compute reference parameters via arrowell_engine",
 )
 def compute_geomag_reference(payload: GeomagCalcRequest):
     if payload.date_iso:
@@ -353,7 +531,6 @@ def compute_geomag_reference(payload: GeomagCalcRequest):
 @router.post(
     "/{well_id}/run-anti-collision",
     response_model=AntiCollisionScanResponse,
-    summary="Trigger Anti-Collision scan for wellbore against an offset well",
 )
 def run_anti_collision_endpoint(
     well_id: str,
@@ -376,7 +553,7 @@ def run_anti_collision_endpoint(
             for s in req.subject_stations
         ]
     else:
-        stations = read_well_stations(well_id, db)
+        stations = _get_well_stations_response(db=db, well_id=well_id)
 
     if not stations or len(stations) < 2:
         raise HTTPException(status_code=400, detail="Well has insufficient survey stations")

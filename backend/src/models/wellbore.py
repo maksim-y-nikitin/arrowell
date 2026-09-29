@@ -9,7 +9,6 @@ from models.base import Base, TimestampMixin
 
 
 class Field(Base, TimestampMixin):
-    """Oil and gas field entity (e.g., Samotlor Field)."""
     __tablename__ = "fields"
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
@@ -18,7 +17,6 @@ class Field(Base, TimestampMixin):
     country: Mapped[str] = mapped_column(String(64), default="Russia")
     basin: Mapped[str] = mapped_column(String(128), default="West Siberian Basin")
 
-    # Relationships
     pads: Mapped[List["Pad"]] = relationship(
         back_populates="field",
         cascade="all, delete-orphan"
@@ -26,7 +24,6 @@ class Field(Base, TimestampMixin):
 
 
 class Pad(Base, TimestampMixin):
-    """Drilling pad / platform location hosting multiple wellbores."""
     __tablename__ = "pads"
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
@@ -35,7 +32,6 @@ class Pad(Base, TimestampMixin):
         nullable=False
     )
     name: Mapped[str] = mapped_column(String(128), nullable=False)
-
     latitude: Mapped[float] = mapped_column(Float, nullable=False)
     longitude: Mapped[float] = mapped_column(Float, nullable=False)
     ground_elevation: Mapped[float] = mapped_column(Float, default=0.0)
@@ -54,10 +50,8 @@ class Pad(Base, TimestampMixin):
 
 
 class GeomagneticReference(Base, TimestampMixin):
-    """Geomagnetic reference parameters and QC thresholds for the pad (WMM/IGRF)."""
     __tablename__ = "geomagnetic_references"
 
-    # Use explicit Sequence for DuckDB compatibility
     id: Mapped[int] = mapped_column(
         Integer,
         Sequence("geomagnetic_references_id_seq"),
@@ -68,7 +62,6 @@ class GeomagneticReference(Base, TimestampMixin):
         unique=True,
         nullable=False
     )
-
     model: Mapped[str] = mapped_column(String(32), default="WMM 2025")
     b_total_ref: Mapped[float] = mapped_column(Float, default=52480.0)
     dip_ref: Mapped[float] = mapped_column(Float, default=72.15)
@@ -83,7 +76,6 @@ class GeomagneticReference(Base, TimestampMixin):
 
 
 class Well(Base, TimestampMixin):
-    """Directional wellbore entity."""
     __tablename__ = "wells"
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
@@ -107,7 +99,6 @@ class Well(Base, TimestampMixin):
 
 
 class SurveyStation(Base, TimestampMixin):
-    """Directional survey station holding trajectory, coordinates, and raw MWD sensor telemetry."""
     __tablename__ = "survey_stations"
 
     id: Mapped[int] = mapped_column(
@@ -119,6 +110,14 @@ class SurveyStation(Base, TimestampMixin):
         ForeignKey("wells.id"),
         nullable=False
     )
+    parent_station_id: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        ForeignKey("survey_stations.id"),
+        nullable=True
+    )
+    survey_type: Mapped[str] = mapped_column(String(32), default="raw")
+    correction_type: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+
     md: Mapped[float] = mapped_column(Float, nullable=False)
     inc: Mapped[float] = mapped_column(Float, nullable=False)
     azim: Mapped[float] = mapped_column(Float, nullable=False)
@@ -129,6 +128,7 @@ class SurveyStation(Base, TimestampMixin):
     vs: Mapped[float] = mapped_column(Float, default=0.0)
     closure_dist: Mapped[float] = mapped_column(Float, default=0.0)
     closure_azim: Mapped[float] = mapped_column(Float, default=0.0)
+
     gx: Mapped[float] = mapped_column(Float, default=0.0)
     gy: Mapped[float] = mapped_column(Float, default=0.0)
     gz: Mapped[float] = mapped_column(Float, default=1.0)
@@ -138,9 +138,11 @@ class SurveyStation(Base, TimestampMixin):
     g_total: Mapped[float] = mapped_column(Float, default=1.0)
     b_total: Mapped[float] = mapped_column(Float, default=52480.0)
     dip_angle: Mapped[float] = mapped_column(Float, default=72.15)
+
     delta_g: Mapped[float] = mapped_column(Float, default=0.0)
     delta_b: Mapped[float] = mapped_column(Float, default=0.0)
     delta_dip: Mapped[float] = mapped_column(Float, default=0.0)
     is_qc_pass: Mapped[bool] = mapped_column(Boolean, default=True)
     status: Mapped[str] = mapped_column(String(32), default="Raw")
+
     well: Mapped["Well"] = relationship(back_populates="stations")
