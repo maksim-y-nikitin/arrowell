@@ -1,12 +1,18 @@
 import math
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
+import arrowell_engine
+from arrowell_engine.coords import GeodeticEngine
+from arrowell_engine.geomag.calculator import GeomagneticModelEngine
+from arrowell_engine.geomag.service import GeomagneticReferenceService
 from arrowell_engine.geomag.specs import ModelFamily
 from arrowell_engine.msa.engine import run_msa_optimization
+from arrowell_engine.msa.qc import compute_qc_thresholds
 from arrowell_engine.msa.qc import (
-    compute_qc_thresholds,
     evaluate_survey_station_qc,
 )
 from arrowell_engine.sag.beam import (
@@ -37,6 +43,7 @@ from schemas.survey import (
     SurveyStationResponse,
     TrajectoryCalculationResponse,
 )
+from schemas.survey import GeomagCalcRequest, GeomagCalcResponse
 
 
 def _synthesize_forward_sensors(
@@ -251,7 +258,8 @@ def run_msa_mwdcore(
     declination_deg: float = 12.42,
     grid_convergence_deg: float = 1.25,
     geomag_model: str = "WMM",
-    cma_generations: int = 70,
+    iscwsa_model_name: str = "ISCWSA_MWD_REV4",  # User-assigned tool error model
+    cma_generations: int = 100,
     max_iter: Optional[int] = None,
     enable_misalignment: bool = True,
     enable_ref_corrections: bool = True,
@@ -283,6 +291,8 @@ def run_msa_mwdcore(
         g_ref=g_total_ref,
         b_ref=b_total_ref,
         dip_ref_deg=dip_ref_deg,
+        iscwsa_model_name=iscwsa_model_name,
+        geomag_model=family,
         enable_misalignment=enable_misalignment,
         enable_ref_corrections=enable_ref_corrections,
         cma_generations=generations_budget,
@@ -647,4 +657,68 @@ def run_anticollision_mwdcore(
         closest_distance_m=round(min_dist, 2) if scan_points else 0.0,
         closest_md_m=round(min_dist_md, 1) if scan_points else 0.0,
         scan_points=scan_points,
+    )
+
+
+def calculate_geomag_reference_mwdcore(payload: GeomagCalcRequest) -> GeomagCalcResponse:
+    """Calculate geomagnetic and gravity field components using arrowell_engine models."""
+    if payload.date_iso:
+        parsed_dt = datetime.fromisoformat(payload.date_iso)
+        target_date = parsed_dt.replace(tzinfo=timezone.utc) if parsed_dt.tzinfo is None else parsed_dt.astimezone(
+            timezone.utc)
+    else:
+        target_date = datetime.now(timezone.utc)
+    calc_date = target_date.date()
+
+    # 1. Theoretical gravity at latitude (WGS-84 Somigliana) and UTM grid convergence
+    g_val = GeomagneticReferenceService.normal_gravity_wgs84(payload.latitude)
+    g_total_ref = g_val / 9.80665
+    conv_deg = GeodeticEngine.calculate_meridian_convergence(payload.latitude, payload.longitude)
+
+    # 2. Resolve geomagnetic spherical harmonic model from engine assets
+    clean_key = payload.model.replace(" ", "").replace("-", "").lower()
+    models_dir = Path(arrowell_engine.__file__).parent / "geomag" / "assets" / "models"
+
+    npz_candidate = models_dir / f"{clean_key}.npz"
+    if not npz_candidate.exists():
+        npz_candidate = models_dir / "wmm2025.npz"
+
+    if npz_candidate.exists():
+        engine = GeomagneticModelEngine(npz_candidate)
+        mag = engine.calculate(
+            latitude_deg=payload.latitude,
+            longitude_deg=payload.longitude,
+            altitude_meters=payload.altitude_m,
+            survey_date=calc_date,
+        )
+        b_total = mag.total_field_nt
+        dip = mag.dip_deg
+        dec = mag.declination_deg
+    else:
+        geomag_srv = GeomagneticReferenceService()
+        b_total, dip, dec = geomag_srv.get_magnetic_reference(
+            lat_deg=payload.latitude,
+            lon_deg=payload.longitude,
+            alt_meters=payload.altitude_m,
+            survey_date=calc_date,
+        )
+
+    try:
+        family = ModelFamily(clean_key.upper())
+    except ValueError:
+        family = ModelFamily.WMM
+
+    qc_thresholds = compute_qc_thresholds(model_family=family, num_sigma=2.5)
+
+    return GeomagCalcResponse(
+        model=payload.model,
+        b_total_ref=round(float(b_total), 1),
+        dip_ref=round(float(dip), 2),
+        declination=round(float(dec), 2),
+        grid_convergence=round(float(conv_deg), 2),
+        g_total_ref=round(float(g_total_ref), 4),
+        g_ms2=round(float(g_val), 4),
+        tolerance_g=qc_thresholds.delta_g_max,
+        tolerance_b=qc_thresholds.delta_b_max,
+        tolerance_dip=qc_thresholds.delta_dip_max,
     )

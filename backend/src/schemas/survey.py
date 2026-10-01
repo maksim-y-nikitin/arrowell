@@ -161,8 +161,45 @@ class AntiCollisionScanResponse(BaseModel):
     scan_points: List[AntiCollisionPointOutput] = Field(default=[])
 
 
+class GeomagReferenceSchema(BaseModel):
+    model: str = Field("WMM 2025", description="Geomagnetic field model name")
+    error_model: str = Field("ISCWSA_MWD_REV4", description="ISCWSA tool error model key")
+    b_total_ref: float = Field(52480.0, description="Total magnetic intensity (nT)")
+    dip_ref: float = Field(72.15, description="Magnetic dip angle (deg)")
+    declination: float = Field(12.42, description="Magnetic declination (deg)")
+    grid_convergence: float = Field(1.25, description="Grid convergence angle (deg)")
+    g_total_ref: float = Field(1.0000, description="Total gravity reference (1.0 g)")
+    tolerance_g: float = Field(0.005, description="Delta G acceptance tolerance (g)")
+    tolerance_b: float = Field(200.0, description="Delta B acceptance tolerance (nT)")
+    tolerance_dip: float = Field(0.30, description="Delta Dip acceptance tolerance (deg)")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class MsaConfigSchema(BaseModel):
-    cma_generations: Optional[int] = Field(70, ge=10, le=300)
+    cma_generations: Optional[int] = Field(100, ge=10, le=300)
     max_iter: Optional[int] = Field(None, ge=10, le=300)
     enable_misalignment: bool = True
     enable_ref_corrections: bool = True
+    error_model: Optional[str] = Field(None, description="Optional override for ISCWSA model")
+    geomag_model: Optional[str] = Field(None, description="Optional override for Geomag model")
+
+class GeomagCalcRequest(BaseModel):
+    latitude: float = Field(..., description="Latitude in degrees (-90 to 90)")
+    longitude: float = Field(..., description="Longitude in degrees (-180 to 180)")
+    altitude_m: float = Field(0.0, description="Altitude above MSL in meters")
+    model: str = Field("WMM2025", description="Geomagnetic model identifier")
+    date_iso: Optional[str] = Field(None, description="ISO formatted date")
+
+
+class GeomagCalcResponse(BaseModel):
+    model: str
+    b_total_ref: float
+    dip_ref: float
+    declination: float
+    grid_convergence: float
+    g_total_ref: float
+    g_ms2: float
+    tolerance_g: float
+    tolerance_b: float
+    tolerance_dip: float

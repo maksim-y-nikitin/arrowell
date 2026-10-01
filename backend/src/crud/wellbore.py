@@ -168,3 +168,22 @@ def sync_survey_set_trajectory(
         db.commit()
 
     return stations
+
+
+def upsert_geomag_reference(
+    db: Session,
+    pad_id: str,
+    data: dict
+) -> GeomagneticReference:
+    """Create or update geomagnetic and tool error model reference parameters in DuckDB."""
+    ref = get_geomag_ref_by_pad_id(db, pad_id)
+    if not ref:
+        ref = GeomagneticReference(pad_id=pad_id, **data)
+        db.add(ref)
+    else:
+        for key, value in data.items():
+            if hasattr(ref, key) and value is not None:
+                setattr(ref, key, value)
+    db.commit()
+    db.refresh(ref)
+    return ref

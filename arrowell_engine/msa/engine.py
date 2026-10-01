@@ -1,11 +1,21 @@
+"""Multi-Station Analysis (MSA) calibration engine.
+
+Provides two-stage optimization (LRA-CMA global exploration + TRF local refinement)
+for downhole MWD triaxial accelerometer and magnetometer sensor error estimation,
+regularized against standard ISCWSA tool error models and geomagnetic reference specs.
+"""
+
+import math
 from dataclasses import dataclass
-from typing import Callable, Optional, Tuple
+from typing import Callable, Optional, Tuple, Union
 
 import numpy as np
 from cmaes import CMA
 from scipy.optimize import least_squares
 
+from ..geomag.specs import GEOMAG_ERROR_MODELS, GeomagneticUncertaintySpec, ModelFamily
 from ..sensors.models import SensorCalibrationParams, apply_sensor_correction
+from ..trajectory.uncertainty import CORE_ISCWSA_MODELS
 
 DEG_TO_RAD = np.pi / 180.0
 
@@ -32,6 +42,11 @@ class MsaResult:
 
 
 def analyze_toolface_coverage(raw_dni: np.ndarray) -> Tuple[float, bool]:
+    """Evaluate angular dispersion of Gravity Toolface (GTF) across survey stations.
+
+    Detects slide-drilling intervals where motor orientation remains static,
+    leading to mathematical unobservability of cross-axial magnetometer biases.
+    """
     gx = raw_dni[:, 0]
     gy = raw_dni[:, 1]
     gtf_deg = np.degrees(np.arctan2(-gx, -gy)) % 360.0
@@ -52,20 +67,48 @@ def analyze_toolface_coverage(raw_dni: np.ndarray) -> Tuple[float, bool]:
 
 def _get_iscwsa_prior_sigmas(
     g_ref: float,
+    iscwsa_model_name: str = "ISCWSA_MWD_REV4",
+    geomag_model: Union[str, ModelFamily] = ModelFamily.WMM,
     enable_misalignment: bool = True,
     enable_ref_corrections: bool = True,
 ) -> np.ndarray:
+    """Extract strict 1-sigma tolerances from ISCWSA catalog and Geomag specs.
+
+    Raises:
+        KeyError: If the requested ISCWSA model or a required error term is missing.
+    """
     g_scale = 1.0 / 9.80665 if g_ref < 5.0 else 1.0
 
-    sigma_ab = 0.004 * g_scale
-    sigma_as = 0.0005
-    sigma_mb_xy = 70.0
-    sigma_mb_z = 2000.0
-    sigma_ms = 0.0016
-    sigma_align = 0.10 * DEG_TO_RAD
-    sigma_dg = 0.0015 * g_scale
-    sigma_db = 60.0
-    sigma_ddip = 0.10
+    model_key = str(iscwsa_model_name).upper()
+    if model_key not in CORE_ISCWSA_MODELS:
+        raise KeyError(
+            f"ISCWSA model '{model_key}' not found in loaded catalog. "
+            f"Available models: {list(CORE_ISCWSA_MODELS.keys())}"
+        )
+
+    terms = {t.mnemonic: t.magnitude_1sigma for t in CORE_ISCWSA_MODELS[model_key]}
+
+    # Strict extraction from catalog: KeyError raised if required term is absent
+    sigma_ab = terms["ABXY-TI1S"] * g_scale
+    sigma_as = terms["ASXY-TI1S"]
+    sigma_mb_xy = terms["MBXY-TI1S"]
+    sigma_ms = terms["MSXY-TI1S"]
+    sigma_align = terms["XYM1"]
+    sigma_mb_z = terms["AMIL"] * 10.0
+
+    # Resolve geomagnetic model specifications
+    if isinstance(geomag_model, str):
+        geomag_family = ModelFamily(geomag_model.upper())
+    else:
+        geomag_family = geomag_model
+
+    geo_spec: GeomagneticUncertaintySpec = GEOMAG_ERROR_MODELS.get(
+        geomag_family, GEOMAG_ERROR_MODELS[ModelFamily.WMM]
+    )
+
+    sigma_dg = geo_spec.gre * g_scale
+    sigma_db = geo_spec.bre
+    sigma_ddip = float(math.degrees(geo_spec.dre)) if geo_spec.dre > 0.0 else 0.10
 
     return np.array([
         sigma_ab, sigma_ab, sigma_ab,
@@ -87,6 +130,7 @@ def _get_soft_physical_bounds(
     enable_misalignment: bool,
     enable_ref_corrections: bool,
 ) -> Tuple[np.ndarray, np.ndarray]:
+    """Define physical hardware sanity bounds for parameter search space."""
     g_scale = 1.0 if g_ref < 5.0 else 9.80665
 
     ab_lim = 0.05 * g_scale
@@ -125,6 +169,7 @@ def _compute_normalized_msa_residuals(
     sigma_b: float,
     sigma_dip: float,
 ) -> np.ndarray:
+    """Compute normalized observation residuals and Bayesian MAP prior penalties."""
     p = u * prior_sigmas
 
     sensor_params = p[:15]
@@ -157,15 +202,17 @@ def _compute_normalized_msa_residuals(
 
 
 class _LraCmaOptimizer:
+    """Adapter wrapping cmaes.CMA with Learning Rate Adaptation (LRA)."""
+
     def __init__(
-            self,
-            x0: np.ndarray,
-            sigma0: float,
-            lower_bounds: np.ndarray,
-            upper_bounds: np.ndarray,
-            max_iter: int = 100,
-            lr_adapt: bool = True,
-            seed: int = 42,
+        self,
+        x0: np.ndarray,
+        sigma0: float,
+        lower_bounds: np.ndarray,
+        upper_bounds: np.ndarray,
+        max_iter: int = 100,
+        lr_adapt: bool = True,
+        seed: int = 42,
     ):
         self.max_iter = max_iter
         self.bounds = np.column_stack([lower_bounds, upper_bounds])
@@ -174,7 +221,7 @@ class _LraCmaOptimizer:
             mean=x0,
             sigma=sigma0,
             bounds=self.bounds,
-            lr_adapt=lr_adapt,  # Включение LRA
+            lr_adapt=lr_adapt,
             seed=seed,
         )
 
@@ -208,13 +255,16 @@ def run_msa_optimization(
     g_ref: float = 1.0,
     b_ref: float = 52000.0,
     dip_ref_deg: float = 72.0,
+    iscwsa_model_name: str = "ISCWSA_MWD_REV4",
+    geomag_model: Union[str, ModelFamily] = ModelFamily.WMM,
     enable_misalignment: bool = True,
     enable_ref_corrections: bool = True,
-    cma_generations: int = 70,
+    cma_generations: int = 100,
     max_iter: Optional[int] = None,
     seed: int = 42,
     **kwargs,
 ) -> MsaResult:
+    """Execute two-stage hybrid MSA calibration (LRA-CMA -> TRF)."""
     if max_iter is not None:
         cma_generations = max_iter
 
@@ -230,6 +280,8 @@ def run_msa_optimization(
 
     sigmas_prior = _get_iscwsa_prior_sigmas(
         g_ref=g_ref,
+        iscwsa_model_name=iscwsa_model_name,
+        geomag_model=geomag_model,
         enable_misalignment=enable_misalignment,
         enable_ref_corrections=enable_ref_corrections,
     )
@@ -257,6 +309,7 @@ def run_msa_optimization(
         )
         return float(np.sum(res**2))
 
+    # Stage 1: Global basin identification via Learning Rate Adaptation CMA-ES
     cma = _LraCmaOptimizer(
         x0=np.zeros(18, dtype=np.float64),
         sigma0=1.0,
@@ -270,6 +323,7 @@ def run_msa_optimization(
 
     u_trf_init = np.clip(u_cma_best, u_lower + 1e-5, u_upper - 1e-5)
 
+    # Stage 2: Local gradient refinement via Trust Region Reflective (TRF)
     trf_res = least_squares(
         fun=_compute_normalized_msa_residuals,
         x0=u_trf_init,
@@ -302,6 +356,7 @@ def run_msa_optimization(
     at_upper = np.isclose(u_best, u_upper, rtol=1e-3, atol=1e-3)
     hit_boundary = bool(np.any(at_lower | at_upper))
 
+    # Compute posterior uncertainty from Gauss-Newton covariance approximation
     param_uncertainties = None
     try:
         jtj = trf_res.jac.T @ trf_res.jac

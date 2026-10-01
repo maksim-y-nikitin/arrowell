@@ -62,7 +62,9 @@ class GeomagneticReference(Base, TimestampMixin):
         unique=True,
         nullable=False
     )
+
     model: Mapped[str] = mapped_column(String(32), default="WMM 2025")
+    error_model: Mapped[str] = mapped_column(String(64), default="ISCWSA_MWD_REV4")
     b_total_ref: Mapped[float] = mapped_column(Float, default=52480.0)
     dip_ref: Mapped[float] = mapped_column(Float, default=72.15)
     declination: Mapped[float] = mapped_column(Float, default=12.42)
@@ -146,3 +148,4 @@ class SurveyStation(Base, TimestampMixin):
     status: Mapped[str] = mapped_column(String(32), default="Raw")
 
     well: Mapped["Well"] = relationship(back_populates="stations")
+

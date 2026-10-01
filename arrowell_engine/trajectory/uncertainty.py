@@ -3,7 +3,7 @@
 Implements the standard industry error propagation model (SPE 67616 / ISCWSA / OWSG):
   1. Analytical evaluation of ISCWSA weighting functions (depth, sensors, alignment, geomagnetic).
   2. Strict propagation according to error modes:
-     - Random (R): independent between stations
+     - Random (R): independent between survey stations
      - Systematic (S): vectorially accumulated along run/BHA
      - Global (G): field-wide systematic accumulation
   3. Covariance matrix synthesis in NEV (North-East-Vertical) frame.
@@ -11,15 +11,108 @@ Implements the standard industry error propagation model (SPE 67616 / ISCWSA / O
   5. 3D Anti-Collision Clearance & Separation Factor (SF) calculation.
 """
 
+import json
 import math
 from dataclasses import dataclass
+from enum import Enum
+from pathlib import Path
 from typing import Dict, List
 
 import numpy as np
 
-from ..geomag.downloader import CORE_ISCWSA_MODELS, IscwsaErrorTerm, ErrorPropagationMode
+
+# =====================================================================
+# 1. ISCWSA ERROR MODEL DEFINITIONS & DYNAMIC ASSET LOADER
+# =====================================================================
+class ErrorPropagationMode(str, Enum):
+    RANDOM = "R"      # Random across survey stations
+    SYSTEMATIC = "S"  # Systematic within BHA run
+    WELL = "W"        # Systematic across entire well
+    GLOBAL = "G"      # Global bias across all wells in field/region
 
 
+@dataclass(slots=True, frozen=True)
+class IscwsaErrorTerm:
+    mnemonic: str
+    weight_func: str
+    magnitude_1sigma: float
+    unit: str
+    mode: ErrorPropagationMode
+    description: str
+
+
+def _load_iscwsa_catalog() -> Dict[str, List[IscwsaErrorTerm]]:
+    """Dynamically load ISCWSA tool error models from compiled binary or JSON assets.
+
+    Raises:
+        FileNotFoundError: If neither iscwsa_catalog.npz nor individual model JSON files exist.
+    """
+    catalog: Dict[str, List[IscwsaErrorTerm]] = {}
+    models_dir = Path(__file__).resolve().parent.parent / "geomag" / "assets" / "models" / "error_models"
+
+    # 1. Attempt loading from primary compressed NPZ binary catalog
+    npz_file = models_dir / "iscwsa_catalog.npz"
+    if npz_file.exists():
+        try:
+            data = np.load(npz_file)
+            raw_catalog = json.loads(str(data["catalog"]))
+            for model_name, model_payload in raw_catalog.items():
+                parsed_terms = [
+                    IscwsaErrorTerm(
+                        mnemonic=t["mnemonic"],
+                        weight_func=t["weight_func"],
+                        magnitude_1sigma=float(t["magnitude_1sigma"]),
+                        unit=t.get("unit", ""),
+                        mode=ErrorPropagationMode(t["mode"]),
+                        description=t.get("description", ""),
+                    )
+                    for t in model_payload.get("terms", [])
+                ]
+                catalog[model_name.upper()] = parsed_terms
+            if catalog:
+                return catalog
+        except Exception:
+            pass
+
+    # 2. Attempt loading from standalone JSON files
+    if models_dir.exists():
+        for json_file in models_dir.glob("*.json"):
+            if json_file.name == "iscwsa-schema.json":
+                continue
+            try:
+                with open(json_file, "r", encoding="utf-8") as f:
+                    model_payload = json.load(f)
+                    model_name = str(model_payload.get("model_name", json_file.stem)).upper()
+                    parsed_terms = [
+                        IscwsaErrorTerm(
+                            mnemonic=t["mnemonic"],
+                            weight_func=t["weight_func"],
+                            magnitude_1sigma=float(t["magnitude_1sigma"]),
+                            unit=t.get("unit", ""),
+                            mode=ErrorPropagationMode(t["mode"]),
+                            description=t.get("description", ""),
+                        )
+                        for t in model_payload.get("terms", [])
+                    ]
+                    catalog[model_name] = parsed_terms
+            except Exception:
+                pass
+        if catalog:
+            return catalog
+
+    raise FileNotFoundError(
+        f"ISCWSA error model catalog not found in {models_dir}. "
+        "Ensure assets/models/error_models/*.json or iscwsa_catalog.npz exist."
+    )
+
+
+# Canonical registry of loaded tool models
+CORE_ISCWSA_MODELS = _load_iscwsa_catalog()
+
+
+# =====================================================================
+# 2. DATA STRUCTURES FOR UNCERTAINTY & CLEARANCE
+# =====================================================================
 @dataclass(slots=True, frozen=True)
 class EllipsoidOfUncertainty:
     station_idx: int
@@ -47,6 +140,9 @@ class SeparationFactorResult:
     warning_level: str               # "CRITICAL", "WARNING", "SAFE"
 
 
+# =====================================================================
+# 3. ISCWSA WEIGHTING EVALUATOR
+# =====================================================================
 class IscwsaWeightingEvaluator:
     """Analytical evaluation of error sensitivity vector: w = [dMD, dInc, dAz]^T."""
 
@@ -141,6 +237,9 @@ class IscwsaWeightingEvaluator:
         return dp
 
 
+# =====================================================================
+# 4. TRAJECTORY ERROR PROPAGATION ENGINE
+# =====================================================================
 def calculate_trajectory_uncertainty(
     md: np.ndarray,
     inc_deg: np.ndarray,
@@ -152,29 +251,18 @@ def calculate_trajectory_uncertainty(
     model_name: str = "ISCWSA_MWD_REV4",
     expansion_k: float = 2.0,  # 2.0 = 2-sigma (95.4% 1D) | 2.7955 = 3D 95%
 ) -> List[EllipsoidOfUncertainty]:
-    """Calculate the 3D Ellipsoid of Uncertainty (EOU) along wellbore trajectory.
-
-    Args:
-        md: Measured depth array (m).
-        inc_deg: Inclination array (deg).
-        azim_deg: Azimuth array (deg).
-        tvd: True vertical depth array (m).
-        b_total_nt: Reference geomagnetic total field (nT).
-        dip_deg: Reference geomagnetic dip angle (deg).
-        declination_deg: Magnetic declination (deg).
-        model_name: ISCWSA tool model key.
-        expansion_k: Standard ellipse coverage factor (k=2.0 for standard 2-sigma).
-
-    Returns:
-        List of EllipsoidOfUncertainty for each survey station.
-    """
+    """Calculate the 3D Ellipsoid of Uncertainty (EOU) along wellbore trajectory."""
     station_count = len(md)
     if station_count < 2:
         raise ValueError("At least 2 stations required for error propagation.")
 
-    terms: List[IscwsaErrorTerm] = CORE_ISCWSA_MODELS.get(
-        model_name, CORE_ISCWSA_MODELS["ISCWSA_MWD_REV4"]
-    )
+    normalized_model_key = model_name.upper()
+    if normalized_model_key not in CORE_ISCWSA_MODELS:
+        raise KeyError(
+            f"Error model '{model_name}' not found in loaded catalog. "
+            f"Available models: {list(CORE_ISCWSA_MODELS.keys())}"
+        )
+    terms: List[IscwsaErrorTerm] = CORE_ISCWSA_MODELS[normalized_model_key]
 
     inc_rad = np.radians(inc_deg)
     azim_rad = np.radians(azim_deg)
@@ -285,6 +373,9 @@ def calculate_trajectory_uncertainty(
     return results
 
 
+# =====================================================================
+# 5. ANTI-COLLISION CLEARANCE & SEPARATION FACTOR (SF)
+# =====================================================================
 def calculate_separation_factor(
     pos_subject_nev: np.ndarray,
     cov_subject_nev: np.ndarray,

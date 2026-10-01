@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useWellbore } from '@/context/WellboreContext';
-import { GeomagneticReference, BhaConfig } from '@/types';
+import { BhaConfig } from '@/types';
 import { calculatePhysicalSagAngle } from '@/utils/directionalMath';
-import { calculateGeomagReference } from '@/utils/api';
+import { calculateGeomagReference, updateWellGeomagReference } from '@/utils/api';
 import {
   X,
   Compass,
@@ -45,42 +45,48 @@ export const GeomagneticSettingsModal: React.FC<SettingsModalProps> = ({ isOpen,
 
   const [activeTab, setActiveTab] = useState<SettingsTab>('location');
   const [isAutoCalculating, setIsAutoCalculating] = useState<boolean>(false);
+  const [isSaving, setIsSaving] = useState<boolean>(false);
 
   // Wellhead & Datum state
-  const [padName, setPadName] = useState<string>(activePad?.name || '');
-  const [wellName, setWellName] = useState<string>(activeWell?.name || '');
-  const [slot, setSlot] = useState<string>(activeWell?.slot || 'Slot #1');
-  const [latitude, setLatitude] = useState<number>(activePad?.latitude ?? 61.1245);
-  const [longitude, setLongitude] = useState<number>(activePad?.longitude ?? 76.7132);
-  const [rkbElevation, setRkbElevation] = useState<number>(activeWell?.datumElevation ?? 54.2);
-  const [glElevation, setGlElevation] = useState<number>(activePad?.groundElevation ?? 48.5);
-  const [datum, setDatum] = useState<string>(activePad?.datum || 'MSL WGS-84');
-  const [targetFormation, setTargetFormation] = useState<string>(activeWell?.targetFormation || 'BV8');
+  const [padName, setPadName] = useState<string>('');
+  const [wellName, setWellName] = useState<string>('');
+  const [slot, setSlot] = useState<string>('Slot #1');
+  const [latitude, setLatitude] = useState<number | string>(61.1245);
+  const [longitude, setLongitude] = useState<number | string>(76.7132);
+  const [rkbElevation, setRkbElevation] = useState<number | string>(54.2);
+  const [glElevation, setGlElevation] = useState<number | string>(48.5);
+  const [datum, setDatum] = useState<string>('MSL WGS-84');
+  const [targetFormation, setTargetFormation] = useState<string>('BV8');
 
-  // Geomagnetic reference state
-  const [model, setModel] = useState<GeomagneticReference['model']>(geoRef?.model || 'WMM 2025');
-  const [bRef, setBRef] = useState<number>(geoRef?.bTotalRef ?? 52480);
-  const [dipRef, setDipRef] = useState<number>(geoRef?.dipRef ?? 72.15);
-  const [declination, setDeclination] = useState<number>(geoRef?.declination ?? 12.42);
-  const [gridConvergence, setGridConvergence] = useState<number>(geoRef?.gridConvergence ?? 1.25);
-  const [tolG, setTolG] = useState<number>(geoRef?.toleranceG ?? 0.005);
-  const [tolB, setTolB] = useState<number>(geoRef?.toleranceB ?? 200);
-  const [tolDip, setTolDip] = useState<number>(geoRef?.toleranceDip ?? 0.30);
+  // Geomagnetic reference and ISCWSA tool error model state
+  const [model, setModel] = useState<string>('WMM 2025');
+  const [errorModel, setErrorModel] = useState<string>('ISCWSA_MWD_REV4');
+  const [bRef, setBRef] = useState<number | string>(52480);
+  const [dipRef, setDipRef] = useState<number | string>(72.15);
+  const [declination, setDeclination] = useState<number | string>(12.42);
+  const [gridConvergence, setGridConvergence] = useState<number | string>(1.25);
+  const [gRef, setGRef] = useState<number | string>(1.0000);
+  const [tolG, setTolG] = useState<number | string>(0.005);
+  const [tolB, setTolB] = useState<number | string>(200);
+  const [tolDip, setTolDip] = useState<number | string>(0.30);
 
   // BHA geometry state
-  const [collarOd, setCollarOd] = useState<number>(bhaConfig?.collarOdMm ?? 171.5);
-  const [collarId, setCollarId] = useState<number>(bhaConfig?.collarIdMm ?? 71.4);
-  const [sensorToBit, setSensorToBit] = useState<number>(bhaConfig?.sensorToBitM ?? 14.2);
-  const [stabDist, setStabDist] = useState<number>(bhaConfig?.stabilizerDistM ?? 21.5);
-  const [mudWeight, setMudWeight] = useState<number>(bhaConfig?.mudWeightGcm3 ?? 1.20);
-  const [material, setMaterial] = useState<BhaConfig['bhaMaterial']>(bhaConfig?.bhaMaterial ?? 'nm_steel');
+  const [collarOd, setCollarOd] = useState<number | string>(171.5);
+  const [collarId, setCollarId] = useState<number | string>(71.4);
+  const [sensorToBit, setSensorToBit] = useState<number | string>(14.2);
+  const [stabDist, setStabDist] = useState<number | string>(21.5);
+  const [mudWeight, setMudWeight] = useState<number | string>(1.20);
+  const [material, setMaterial] = useState<BhaConfig['bhaMaterial']>('nm_steel');
 
-  // MSA engine configuration (Default: 100 generations for LRA-CMA convergence)
-  const [maxIter, setMaxIter] = useState<number>(msaConfig?.maxIter || 100);
-  const [enableMisalignment, setEnableMisalignment] = useState<boolean>(msaConfig?.enableMisalignment ?? true);
-  const [enableRefCorrections, setEnableRefCorrections] = useState<boolean>(msaConfig?.enableRefCorrections ?? true);
+  // MSA engine configuration
+  const [maxIter, setMaxIter] = useState<number | string>(100);
+  const [enableMisalignment, setEnableMisalignment] = useState<boolean>(true);
+  const [enableRefCorrections, setEnableRefCorrections] = useState<boolean>(true);
 
+  // Синхронизация полей формы: срабатывает КАЖДЫЙ РАЗ при открытии окна (isOpen === true)
   useEffect(() => {
+    if (!isOpen) return;
+
     if (activePad) {
       setPadName(activePad.name || '');
       setLatitude(activePad.latitude ?? 61.1245);
@@ -88,52 +94,90 @@ export const GeomagneticSettingsModal: React.FC<SettingsModalProps> = ({ isOpen,
       setGlElevation(activePad.groundElevation ?? 48.5);
       setDatum(activePad.datum || 'MSL WGS-84');
     }
+
     if (activeWell) {
       setWellName(activeWell.name || '');
       setSlot(activeWell.slot || 'Slot #1');
       setRkbElevation(activeWell.datumElevation ?? 54.2);
       setTargetFormation(activeWell.targetFormation || 'BV8');
     }
-  }, [activePad, activeWell]);
+
+    if (geoRef) {
+      setModel(geoRef.model || 'WMM 2025');
+      setErrorModel(geoRef.errorModel || 'ISCWSA_MWD_REV4');
+      setBRef(geoRef.bTotalRef ?? 52480);
+      setDipRef(geoRef.dipRef ?? 72.15);
+      setDeclination(geoRef.declination ?? 12.42);
+      setGridConvergence(geoRef.gridConvergence ?? 1.25);
+      setGRef(geoRef.gTotalRef ?? 1.0000);
+      setTolG(geoRef.toleranceG ?? 0.005);
+      setTolB(geoRef.toleranceB ?? 200);
+      setTolDip(geoRef.toleranceDip ?? 0.30);
+    }
+
+    if (bhaConfig) {
+      setCollarOd(bhaConfig.collarOdMm ?? 171.5);
+      setCollarId(bhaConfig.collarIdMm ?? 71.4);
+      setSensorToBit(bhaConfig.sensorToBitM ?? 14.2);
+      setStabDist(bhaConfig.stabilizerDistM ?? 21.5);
+      setMudWeight(bhaConfig.mudWeightGcm3 ?? 1.20);
+      setMaterial(bhaConfig.bhaMaterial ?? 'nm_steel');
+    }
+
+    if (msaConfig) {
+      setMaxIter(msaConfig.maxIter || 100);
+      setEnableMisalignment(msaConfig.enableMisalignment ?? true);
+      setEnableRefCorrections(msaConfig.enableRefCorrections ?? true);
+    }
+  }, [isOpen, activePad, activeWell, geoRef, bhaConfig, msaConfig]);
 
   if (!isOpen) return null;
 
-  const airGap = Number(((rkbElevation || 0) - (glElevation || 0)).toFixed(2));
+  const numRkb = Number(rkbElevation) || 0;
+  const numGl = Number(glElevation) || 0;
+  const airGap = Number((numRkb - numGl).toFixed(2));
 
-  // Compute theoretical sag angle for live preview
+  // Расчет провисания КНБК в реальном времени
   const previewSagAngle = calculatePhysicalSagAngle({
-    collarOdMm: collarOd,
-    collarIdMm: collarId,
-    sensorToBitM: sensorToBit,
-    stabilizerDistM: stabDist,
-    mudWeightGcm3: mudWeight,
+    collarOdMm: Number(collarOd) || 171.5,
+    collarIdMm: Number(collarId) || 71.4,
+    sensorToBitM: Number(sensorToBit) || 14.2,
+    stabilizerDistM: Number(stabDist) || 21.5,
+    mudWeightGcm3: Number(mudWeight) || 1.20,
     bhaMaterial: material,
   });
 
   const handleAutoCalculateGeomag = async () => {
     setIsAutoCalculating(true);
     try {
+      const cleanModelIdentifier = model.replace(/[^a-zA-Z0-9]/g, '');
+
       const res = await calculateGeomagReference({
-        latitude: latitude,
-        longitude: longitude,
-        altitude_m: glElevation,
-        model: model.includes('IGRF') ? 'IGRF14' : 'WMM2025',
+        latitude: Number(latitude) || 0,
+        longitude: Number(longitude) || 0,
+        altitude_m: Number(glElevation) || 0,
+        model: cleanModelIdentifier,
       });
 
       setBRef(res.b_total_ref);
       setDipRef(res.dip_ref);
       setDeclination(res.declination);
       setGridConvergence(res.grid_convergence);
+      setGRef(res.g_total_ref);
+
+      if (res.tolerance_g !== undefined) setTolG(res.tolerance_g);
+      if (res.tolerance_b !== undefined) setTolB(res.tolerance_b);
+      if (res.tolerance_dip !== undefined) setTolDip(res.tolerance_dip);
 
       notify(
         isRu
-          ? `WMM рассчитан: Btotal=${res.b_total_ref} нТл, Dip=${res.dip_ref}°, Dec=${res.declination}°`
-          : `WMM computed: Btotal=${res.b_total_ref} nT, Dip=${res.dip_ref}°, Dec=${res.declination}°`,
+          ? `${model}: Btotal=${res.b_total_ref} нТл, Dip=${res.dip_ref}°, Gtotal=${res.g_total_ref} g`
+          : `${model} computed: Btotal=${res.b_total_ref} nT, Dip=${res.dip_ref}°, Gtotal=${res.g_total_ref} g`,
         'success'
       );
     } catch {
       notify(
-        isRu ? 'Не удалось рассчитать опорные параметры' : 'Failed to compute reference parameters',
+        isRu ? `Ошибка расчета параметров по модели ${model}` : `Failed to compute reference for ${model}`,
         'error'
       );
     } finally {
@@ -163,52 +207,102 @@ export const GeomagneticSettingsModal: React.FC<SettingsModalProps> = ({ isOpen,
     }
   };
 
-  const handleSave = (e: React.FormEvent) => {
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
+    setIsSaving(true);
 
-    updateWellProperties({
-      padName,
-      wellName,
-      slot,
-      latitude,
-      longitude,
-      datumElevation: rkbElevation,
-      groundElevation: glElevation,
-      datum,
-      targetFormation,
-    });
+    try {
+      const numBRef = Number(bRef) || 0;
+      const numDipRef = Number(dipRef) || 0;
+      const numDeclination = Number(declination) || 0;
+      const numGridConv = Number(gridConvergence) || 0;
+      const numGRef = Number(gRef) || 1.0;
+      const numTolG = Number(tolG) || 0.005;
+      const numTolB = Number(tolB) || 200;
+      const numTolDip = Number(tolDip) || 0.30;
 
-    updateGeoRef({
-      model,
-      bTotalRef: bRef,
-      dipRef,
-      declination,
-      gridConvergence,
-      toleranceG: tolG,
-      toleranceB: tolB,
-      toleranceDip: tolDip,
-    });
+      const numLat = Number(latitude) || 0;
+      const numLon = Number(longitude) || 0;
+      const numRkbVal = Number(rkbElevation) || 0;
+      const numGlVal = Number(glElevation) || 0;
 
-    updateBhaConfig({
-      collarOdMm: collarOd,
-      collarIdMm: collarId,
-      sensorToBitM: sensorToBit,
-      stabilizerDistM: stabDist,
-      mudWeightGcm3: mudWeight,
-      bhaMaterial: material,
-    });
+      const numCollarOd = Number(collarOd) || 171.5;
+      const numCollarId = Number(collarId) || 71.4;
+      const numSensorToBit = Number(sensorToBit) || 14.2;
+      const numStabDist = Number(stabDist) || 21.5;
+      const numMudWeight = Number(mudWeight) || 1.20;
+      const numMaxIter = Number(maxIter) || 100;
 
-    updateMsaConfig({
-      maxIter,
-      enableMisalignment,
-      enableRefCorrections,
-    });
+      // 1. Сохранение конфигурации в DuckDB на сервере
+      if (activeWell?.id) {
+        await updateWellGeomagReference(activeWell.id, {
+          model,
+          error_model: errorModel,
+          b_total_ref: numBRef,
+          dip_ref: numDipRef,
+          declination: numDeclination,
+          grid_convergence: numGridConv,
+          g_total_ref: numGRef,
+          tolerance_g: numTolG,
+          tolerance_b: numTolB,
+          tolerance_dip: numTolDip,
+        });
+      }
 
-    notify(
-      isRu ? 'Инженерная конфигурация сохранена' : 'Engineering configuration successfully saved',
-      'success'
-    );
-    onClose();
+      // 2. Синхронизация глобального контекста React
+      updateWellProperties({
+        padName,
+        wellName,
+        slot,
+        latitude: numLat,
+        longitude: numLon,
+        datumElevation: numRkbVal,
+        groundElevation: numGlVal,
+        datum,
+        targetFormation,
+      });
+
+      updateGeoRef({
+        model,
+        errorModel,
+        bTotalRef: numBRef,
+        dipRef: numDipRef,
+        declination: numDeclination,
+        gridConvergence: numGridConv,
+        gTotalRef: numGRef,
+        toleranceG: numTolG,
+        toleranceB: numTolB,
+        toleranceDip: numTolDip,
+      });
+
+      updateBhaConfig({
+        collarOdMm: numCollarOd,
+        collarIdMm: numCollarId,
+        sensorToBitM: numSensorToBit,
+        stabilizerDistM: numStabDist,
+        mudWeightGcm3: numMudWeight,
+        bhaMaterial: material,
+      });
+
+      updateMsaConfig({
+        maxIter: numMaxIter,
+        enableMisalignment,
+        enableRefCorrections,
+        errorModel,
+        geomagModel: model,
+      });
+
+      notify(
+        isRu
+          ? 'Конфигурация сохранена в DuckDB и применена к скважине'
+          : 'Configuration saved to DuckDB and applied to wellbore',
+        'success'
+      );
+    } catch (err: any) {
+      notify(err.message || 'Error saving settings to database', 'error');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const navItemClass = (tab: SettingsTab, color: '' | 'acc' | 'okc' | 'mag') =>
@@ -225,7 +319,7 @@ export const GeomagneticSettingsModal: React.FC<SettingsModalProps> = ({ isOpen,
             <span>{isRu ? 'Инженерная конфигурация' : 'Engineering Configuration'}</span>
             <span className="pill acc">{activeWell?.name}</span>
           </div>
-          <button type="button" onClick={onClose} className="iconbtn">
+          <button type="button" onClick={onClose} className="iconbtn" title={isRu ? 'Закрыть' : 'Close'}>
             <X />
           </button>
         </div>
@@ -251,8 +345,8 @@ export const GeomagneticSettingsModal: React.FC<SettingsModalProps> = ({ isOpen,
             >
               <Compass />
               <div>
-                <div className="nav-title whitespace-nowrap">{isRu ? 'Геомагнитная модель' : 'Geomagnetic Model'}</div>
-                <div className="nav-sub">WMM 2025 Ref</div>
+                <div className="nav-title whitespace-nowrap">{isRu ? 'Геомагнетизм и ISCWSA' : 'Geomag & ISCWSA'}</div>
+                <div className="nav-sub">Model & Error Setup</div>
               </div>
             </button>
 
@@ -286,8 +380,8 @@ export const GeomagneticSettingsModal: React.FC<SettingsModalProps> = ({ isOpen,
                 <span>ISCWSA Standard</span>
               </div>
               {isRu
-                ? 'Регуляризация по 1-sigma модели погрешностей OWSG.'
-                : 'Regularized against 1-sigma OWSG error model.'}
+                ? 'Параметры сохраняются в DuckDB и управляют расчетом MSA и траектории.'
+                : 'Settings persist in DuckDB to drive MSA and trajectory calculations.'}
             </div>
           </nav>
 
@@ -347,9 +441,9 @@ export const GeomagneticSettingsModal: React.FC<SettingsModalProps> = ({ isOpen,
                         </label>
                         <input
                           type="number"
-                          step="0.000001"
+                          step="any"
                           value={latitude}
-                          onChange={(e) => setLatitude(parseFloat(e.target.value) || 0)}
+                          onChange={(e) => setLatitude(e.target.value)}
                           className="input mono"
                         />
                       </div>
@@ -359,9 +453,9 @@ export const GeomagneticSettingsModal: React.FC<SettingsModalProps> = ({ isOpen,
                         </label>
                         <input
                           type="number"
-                          step="0.000001"
+                          step="any"
                           value={longitude}
-                          onChange={(e) => setLongitude(parseFloat(e.target.value) || 0)}
+                          onChange={(e) => setLongitude(e.target.value)}
                           className="input mono"
                         />
                       </div>
@@ -378,9 +472,9 @@ export const GeomagneticSettingsModal: React.FC<SettingsModalProps> = ({ isOpen,
                         <label className="field-label">RKB (m)</label>
                         <input
                           type="number"
-                          step="0.1"
+                          step="any"
                           value={rkbElevation}
-                          onChange={(e) => setRkbElevation(parseFloat(e.target.value) || 0)}
+                          onChange={(e) => setRkbElevation(e.target.value)}
                           className="input mono okc"
                         />
                       </div>
@@ -390,9 +484,9 @@ export const GeomagneticSettingsModal: React.FC<SettingsModalProps> = ({ isOpen,
                         </label>
                         <input
                           type="number"
-                          step="0.1"
+                          step="any"
                           value={glElevation}
-                          onChange={(e) => setGlElevation(parseFloat(e.target.value) || 0)}
+                          onChange={(e) => setGlElevation(e.target.value)}
                           className="input mono"
                         />
                       </div>
@@ -414,24 +508,30 @@ export const GeomagneticSettingsModal: React.FC<SettingsModalProps> = ({ isOpen,
                       </label>
                       <select
                         value={model}
-                        onChange={(e) => setModel(e.target.value as any)}
-                        className="select"
+                        onChange={(e) => setModel(e.target.value)}
+                        className="select font-semibold"
                       >
-                        <option value="WMM 2025">
-                          {isRu
-                            ? 'Мировая магнитная модель 2025 (WMM)'
-                            : 'World Magnetic Model 2025 (WMM)'}
-                        </option>
-                        <option value="IGRF-13">
-                          {isRu
-                            ? 'Международное геомагнитное поле (IGRF)'
-                            : 'IAGA International Field (IGRF)'}
-                        </option>
-                        <option value="HDGM">
-                          {isRu
-                            ? 'Высокоточная геомагнитная модель (HDGM)'
-                            : 'High Definition Geomagnetic Model (HDGM)'}
-                        </option>
+                        <option value="WMM 2025">WMM 2025 (World Magnetic Model)</option>
+                        <option value="IGRF-14">IGRF-14 (IAGA Scientific Standard)</option>
+                        <option value="HDGM">HDGM (High Definition Model)</option>
+                        <option value="IFR1">IFR1 (Static In-Field Referencing)</option>
+                        <option value="IFR2">IFR2 (Dynamic Base Station IFR)</option>
+                      </select>
+                    </div>
+
+                    <div className="field flex-1 max-w-sm">
+                      <label className="field-label">
+                        {isRu ? 'Модель погрешности ISCWSA' : 'ISCWSA Tool Error Model'}
+                      </label>
+                      <select
+                        value={errorModel}
+                        onChange={(e) => setErrorModel(e.target.value)}
+                        className="select font-semibold"
+                      >
+                        <option value="ISCWSA_MWD_REV4">ISCWSA MWD Rev 4 (Standard Industry)</option>
+                        <option value="ISCWSA_MWD_REV5">ISCWSA MWD Rev 5.11 (Updated Noise)</option>
+                        <option value="ISCWSA_MWD_IFR1_REV4">ISCWSA MWD + IFR1 (High Precision)</option>
+                        <option value="ISCWSA_MWD_SAG_REV4">ISCWSA MWD + SAG (Corrected Sag)</option>
                       </select>
                     </div>
 
@@ -439,7 +539,8 @@ export const GeomagneticSettingsModal: React.FC<SettingsModalProps> = ({ isOpen,
                       type="button"
                       onClick={handleAutoCalculateGeomag}
                       disabled={isAutoCalculating}
-                      className="btn h-[30px] flex items-center gap-1.5"
+                      className="btn h-[30px] flex items-center gap-1.5 whitespace-nowrap"
+                      title={isRu ? `Рассчитать параметры поля по модели ${model}` : `Compute field parameters using ${model}`}
                     >
                       <Sparkles
                         className={`w-3.5 h-3.5 text-[var(--accent)] ${
@@ -448,12 +549,8 @@ export const GeomagneticSettingsModal: React.FC<SettingsModalProps> = ({ isOpen,
                       />
                       <span>
                         {isAutoCalculating
-                          ? isRu
-                            ? 'Расчёт…'
-                            : 'Computing...'
-                          : isRu
-                          ? 'Рассчитать WMM по координатам'
-                          : 'Auto WMM from Coords'}
+                          ? isRu ? 'Расчёт…' : 'Computing...'
+                          : isRu ? 'Рассчитать по координатам' : 'Compute from Coords'}
                       </span>
                     </button>
                   </div>
@@ -462,54 +559,65 @@ export const GeomagneticSettingsModal: React.FC<SettingsModalProps> = ({ isOpen,
                     <div className="field-card-head">
                       <span>
                         {isRu
-                          ? 'Компоненты опорного поля'
-                          : 'Reference Field Components'}
+                          ? 'Компоненты опорного поля на скважине'
+                          : 'Wellbore Reference Field Components'}
                       </span>
                     </div>
-                    <div className="field-grid cols-4">
+                    <div className="field-grid cols-5">
                       <div className="field">
                         <label className="field-label">Btotal (nT)</label>
                         <input
                           type="number"
+                          step="any"
                           value={bRef}
-                          onChange={(e) => setBRef(parseFloat(e.target.value) || 0)}
+                          onChange={(e) => setBRef(e.target.value)}
                           className="input mono acc"
                         />
                       </div>
                       <div className="field">
                         <label className="field-label">
-                          {isRu ? 'Угол наклонения (°)' : 'Dip Angle (°)'}
+                          {isRu ? 'Наклонение (°)' : 'Dip Angle (°)'}
                         </label>
                         <input
                           type="number"
-                          step="0.01"
+                          step="any"
                           value={dipRef}
-                          onChange={(e) => setDipRef(parseFloat(e.target.value) || 0)}
+                          onChange={(e) => setDipRef(e.target.value)}
                           className="input mono"
                         />
                       </div>
                       <div className="field">
                         <label className="field-label">
-                          {isRu ? 'Магнитное склонение (°В)' : 'Declination (°E)'}
+                          {isRu ? 'Склонение (°В)' : 'Declination (°E)'}
                         </label>
                         <input
                           type="number"
-                          step="0.01"
+                          step="any"
                           value={declination}
-                          onChange={(e) => setDeclination(parseFloat(e.target.value) || 0)}
+                          onChange={(e) => setDeclination(e.target.value)}
                           className="input mono"
                         />
                       </div>
                       <div className="field">
                         <label className="field-label">
-                          {isRu ? 'Сближение меридианов (°)' : 'Convergence (°)'}
+                          {isRu ? 'Сближение (°)' : 'Convergence (°)'}
                         </label>
                         <input
                           type="number"
-                          step="0.01"
+                          step="any"
                           value={gridConvergence}
-                          onChange={(e) => setGridConvergence(parseFloat(e.target.value) || 0)}
+                          onChange={(e) => setGridConvergence(e.target.value)}
                           className="input mono"
+                        />
+                      </div>
+                      <div className="field">
+                        <label className="field-label">Gtotal (g)</label>
+                        <input
+                          type="number"
+                          step="any"
+                          value={gRef}
+                          onChange={(e) => setGRef(e.target.value)}
+                          className="input mono okc"
                         />
                       </div>
                     </div>
@@ -519,8 +627,8 @@ export const GeomagneticSettingsModal: React.FC<SettingsModalProps> = ({ isOpen,
                     <div className="field-card-head">
                       <span>
                         {isRu
-                          ? 'Допуски контроля качества'
-                          : 'QC Acceptance Tolerances'}
+                          ? 'Допуски контроля качества (Дельты QC)'
+                          : 'QC Acceptance Tolerances (Deltas)'}
                       </span>
                     </div>
                     <div className="field-grid cols-3">
@@ -528,9 +636,9 @@ export const GeomagneticSettingsModal: React.FC<SettingsModalProps> = ({ isOpen,
                         <label className="field-label">Δ Gtotal Tol (g)</label>
                         <input
                           type="number"
-                          step="0.001"
+                          step="any"
                           value={tolG}
-                          onChange={(e) => setTolG(parseFloat(e.target.value) || 0)}
+                          onChange={(e) => setTolG(e.target.value)}
                           className="input mono"
                         />
                       </div>
@@ -538,8 +646,9 @@ export const GeomagneticSettingsModal: React.FC<SettingsModalProps> = ({ isOpen,
                         <label className="field-label">Δ Btotal Tol (nT)</label>
                         <input
                           type="number"
+                          step="any"
                           value={tolB}
-                          onChange={(e) => setTolB(parseInt(e.target.value, 10) || 0)}
+                          onChange={(e) => setTolB(e.target.value)}
                           className="input mono"
                         />
                       </div>
@@ -547,9 +656,9 @@ export const GeomagneticSettingsModal: React.FC<SettingsModalProps> = ({ isOpen,
                         <label className="field-label">Δ Dip Tol (°)</label>
                         <input
                           type="number"
-                          step="0.01"
+                          step="any"
                           value={tolDip}
-                          onChange={(e) => setTolDip(parseFloat(e.target.value) || 0)}
+                          onChange={(e) => setTolDip(e.target.value)}
                           className="input mono"
                         />
                       </div>
@@ -563,13 +672,22 @@ export const GeomagneticSettingsModal: React.FC<SettingsModalProps> = ({ isOpen,
                   <div className="preset-bar">
                     <span className="preset-label">{isRu ? 'Пресеты' : 'Presets'}</span>
                     <div className="seg">
-                      <button type="button" onClick={() => applyPreset('standard')}>
+                      <button
+                        type="button"
+                        onClick={() => applyPreset('standard')}
+                      >
                         6-3/4" (171 mm)
                       </button>
-                      <button type="button" onClick={() => applyPreset('slim')}>
+                      <button
+                        type="button"
+                        onClick={() => applyPreset('slim')}
+                      >
                         4-3/4" (121 mm)
                       </button>
-                      <button type="button" onClick={() => applyPreset('heavy')}>
+                      <button
+                        type="button"
+                        onClick={() => applyPreset('heavy')}
+                      >
                         8" (203 mm)
                       </button>
                     </div>
@@ -577,20 +695,16 @@ export const GeomagneticSettingsModal: React.FC<SettingsModalProps> = ({ isOpen,
 
                   <div className="field-card">
                     <div className="field-card-head">
-                      <span>
-                        {isRu
-                          ? 'Размеры и разнос УБТ'
-                          : 'Collar Dimensions & Spacing'}
-                      </span>
+                      <span>{isRu ? 'Размеры и разнос УБТ' : 'Collar Dimensions & Spacing'}</span>
                     </div>
                     <div className="field-grid cols-4">
                       <div className="field">
                         <label className="field-label">OD (mm)</label>
                         <input
                           type="number"
-                          step="0.1"
+                          step="any"
                           value={collarOd}
-                          onChange={(e) => setCollarOd(parseFloat(e.target.value) || 0)}
+                          onChange={(e) => setCollarOd(e.target.value)}
                           className="input mono okc"
                         />
                       </div>
@@ -598,33 +712,29 @@ export const GeomagneticSettingsModal: React.FC<SettingsModalProps> = ({ isOpen,
                         <label className="field-label">ID (mm)</label>
                         <input
                           type="number"
-                          step="0.1"
+                          step="any"
                           value={collarId}
-                          onChange={(e) => setCollarId(parseFloat(e.target.value) || 0)}
+                          onChange={(e) => setCollarId(e.target.value)}
                           className="input mono"
                         />
                       </div>
                       <div className="field">
-                        <label className="field-label">
-                          {isRu ? 'Долото — датчик (м)' : 'Bit to Sensor (m)'}
-                        </label>
+                        <label className="field-label">{isRu ? 'Долото — датчик (м)' : 'Bit to Sensor (m)'}</label>
                         <input
                           type="number"
-                          step="0.1"
+                          step="any"
                           value={sensorToBit}
-                          onChange={(e) => setSensorToBit(parseFloat(e.target.value) || 0)}
+                          onChange={(e) => setSensorToBit(e.target.value)}
                           className="input mono"
                         />
                       </div>
                       <div className="field">
-                        <label className="field-label">
-                          {isRu ? 'Долото — калибратор (м)' : 'Bit to Stab (m)'}
-                        </label>
+                        <label className="field-label">{isRu ? 'Долото — калибратор (м)' : 'Bit to Stab (m)'}</label>
                         <input
                           type="number"
-                          step="0.1"
+                          step="any"
                           value={stabDist}
-                          onChange={(e) => setStabDist(parseFloat(e.target.value) || 0)}
+                          onChange={(e) => setStabDist(e.target.value)}
                           className="input mono"
                         />
                       </div>
@@ -634,45 +744,31 @@ export const GeomagneticSettingsModal: React.FC<SettingsModalProps> = ({ isOpen,
                   <div className="field-grid cols-2">
                     <div className="field-card">
                       <div className="field-card-head">
-                        <span>
-                          {isRu
-                            ? 'Плотность раствора и материал'
-                            : 'Fluid Density & Material'}
-                        </span>
+                        <span>{isRu ? 'Плотность раствора и материал' : 'Fluid Density & Material'}</span>
                       </div>
                       <div className="field-grid">
                         <div className="field">
-                          <label className="field-label">
-                            {isRu
-                              ? 'Плотность раствора (г/см³)'
-                              : 'Mud Weight (g/cm³)'}
-                          </label>
+                          <label className="field-label">{isRu ? 'Плотность раствора (г/см³)' : 'Mud Weight (g/cm³)'}</label>
                           <input
                             type="number"
-                            step="0.01"
+                            step="any"
                             value={mudWeight}
-                            onChange={(e) => setMudWeight(parseFloat(e.target.value) || 0)}
+                            onChange={(e) => setMudWeight(e.target.value)}
                             className="input mono acc"
                           />
                         </div>
                         <div className="field">
-                          <label className="field-label">
-                            {isRu ? 'Материал УБТ' : 'Collar Material'}
-                          </label>
+                          <label className="field-label">{isRu ? 'Материал УБТ' : 'Collar Material'}</label>
                           <select
                             value={material}
                             onChange={(e) => setMaterial(e.target.value as any)}
                             className="select"
                           >
                             <option value="nm_steel">
-                              {isRu
-                                ? 'Немагнитная сталь (190 ГПа)'
-                                : 'Non-Magnetic Steel (190 GPa)'}
+                              {isRu ? 'Немагнитная сталь (190 ГПа)' : 'Non-Magnetic Steel (190 GPa)'}
                             </option>
                             <option value="steel">
-                              {isRu
-                                ? 'Углеродистая сталь (205 ГПа)'
-                                : 'Carbon Steel (205 GPa)'}
+                              {isRu ? 'Углеродистая сталь (205 ГПа)' : 'Carbon Steel (205 GPa)'}
                             </option>
                           </select>
                         </div>
@@ -683,11 +779,7 @@ export const GeomagneticSettingsModal: React.FC<SettingsModalProps> = ({ isOpen,
                       <div>
                         <div className="stat-head">
                           <Ruler />
-                          <span>
-                            {isRu
-                              ? 'Теоретический прогиб (при Inc = 90°)'
-                              : 'Theoretical Sag (at Inc = 90°)'}
-                          </span>
+                          <span>{isRu ? 'Теоретический прогиб (при Inc = 90°)' : 'Theoretical Sag (at Inc = 90°)'}</span>
                         </div>
                         <p className="stat-desc">
                           {isRu
@@ -710,32 +802,32 @@ export const GeomagneticSettingsModal: React.FC<SettingsModalProps> = ({ isOpen,
                     <div className="field-card-head mag">
                       <Cpu />
                       <span>{isRu ? 'Вычислительное ядро MSA' : 'MSA Computation Engine'}</span>
-                      <span className="pill acc ml-auto">LRA-CMA + TRF</span>
+                      <span className="pill acc ml-auto">{errorModel}</span>
                     </div>
 
                     <div className="p-3 rounded-[var(--r2)] border border-[var(--mag-line)] bg-[var(--mag-soft)] text-[var(--fg-0)] space-y-2">
                       <div className="flex items-center justify-between">
                         <span className="font-semibold text-[13px] text-[var(--mag)]">
                           {isRu
-                            ? 'LRA-CMA + TRF (Двухстадийный адаптивный гибрид)'
-                            : 'LRA-CMA + TRF (Two-Stage Adaptive Hybrid)'}
+                            ? `LRA-CMA + TRF (Модель: ${errorModel})`
+                            : `LRA-CMA + TRF (Model: ${errorModel})`}
                         </span>
                         <span className="pill ok flex items-center gap-1">
                           <CheckCircle2 className="w-3 h-3" />
-                          <span>{isRu ? 'Индустриальный стандарт' : 'Active Standard'}</span>
+                          <span>{model}</span>
                         </span>
                       </div>
 
                       <p className="text-[11.5px] leading-relaxed text-[var(--fg-1)]">
                         {isRu
-                          ? '1. Глобальный адаптивный поиск: LRA-CMA (Learning Rate Adaptation) с динамическим контролем соотношения сигнал/шум (SNR) и активным сжатием ковариаций (aCMA). Предотвращает преждевременное схлопывание дисперсии и преодолевает ложные минимумы при ограниченном тулфейсе.\n2. Прецизионная доводка: Локальная квадратичная минимизация доверительными областями (TRF) в пределах мягких физических ограничений сенсора с байесовской регуляризацией ISCWSA 1-sigma.'
-                          : '1. Global Adaptive Search: LRA-CMA (Learning Rate Adaptation) with dynamic signal-to-noise (SNR) tracking and active covariance updates (aCMA). Prevents premature step collapse and circumvents local minima under restricted toolface coverage.\n2. Precision Polish: Local quadratic Trust Region Reflective (TRF) minimization within physical sanity bounds and ISCWSA 1-sigma Bayesian MAP regularization.'}
+                          ? `Априорные сигмы калибровки извлекаются строго из паспорта ${errorModel}. Допуски дельт вычисляются по геомагнитной спецификации ${model}.`
+                          : `Bayesian prior tolerances extracted directly from ${errorModel}. Delta thresholds driven by ${model} reference specs.`}
                       </p>
 
                       <div className="flex flex-wrap gap-2 pt-1 border-t border-[var(--mag-line)] text-[10.5px] font-mono text-[var(--fg-2)]">
-                        <span>✓ LRA (SNR-based)</span>
-                        <span>✓ Active Covariance (aCMA)</span>
-                        <span>✓ Whitening (u = p/σ)</span>
+                        <span>✓ {errorModel}</span>
+                        <span>✓ {model}</span>
+                        <span>✓ DuckDB Persistent</span>
                         <span>✓ Cov(p) = (JᵀJ)⁻¹</span>
                       </div>
                     </div>
@@ -748,21 +840,17 @@ export const GeomagneticSettingsModal: React.FC<SettingsModalProps> = ({ isOpen,
                     <div className="field-grid cols-2">
                       <div className="field">
                         <label className="field-label">
-                          {isRu ? 'Поколений LRA-CMA (Бюджет поиска)' : 'LRA-CMA Generations (Budget)'}
+                          {isRu ? 'Поколений LRA-CMA' : 'LRA-CMA Generations'}
                         </label>
                         <input
                           type="number"
                           min={30}
                           max={300}
+                          step="1"
                           value={maxIter}
-                          onChange={(e) => setMaxIter(parseInt(e.target.value, 10) || 100)}
+                          onChange={(e) => setMaxIter(e.target.value)}
                           className="input mono mag font-bold"
                         />
-                        <span className="text-[10px] text-[var(--fg-3)] mt-1">
-                          {isRu
-                            ? 'Рекомендуется: 80–120 поколений (~1000–1500 вычислений для полной адаптации LRA)'
-                            : 'Recommended: 80–120 generations (~1000–1500 evaluations for full LRA adaptation)'}
-                        </span>
                       </div>
                     </div>
                   </div>
@@ -808,16 +896,29 @@ export const GeomagneticSettingsModal: React.FC<SettingsModalProps> = ({ isOpen,
             <div className="modal-foot">
               <span className="foot-hint">
                 {isRu
-                  ? 'Настройки применяются ко всем замерам немедленно.'
-                  : 'Settings apply immediately across all surveys.'}
+                  ? 'Параметры сохраняются в DuckDB и применяются ко всей скважине.'
+                  : 'Parameters persist in DuckDB and apply across entire wellbore.'}
               </span>
               <div className="flex items-center gap-2">
-                <button type="button" onClick={onClose} className="btn">
-                  {isRu ? 'Отмена' : 'Cancel'}
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="btn"
+                  disabled={isSaving}
+                >
+                  {isRu ? 'Закрыть' : 'Close'}
                 </button>
-                <button type="submit" className="btn solid">
+                <button
+                  type="submit"
+                  className="btn solid"
+                  disabled={isSaving}
+                >
                   <Check className="w-3.5 h-3.5" />
-                  <span>{isRu ? 'Сохранить и применить' : 'Save & Apply'}</span>
+                  <span>
+                    {isSaving
+                      ? isRu ? 'Сохранение в DuckDB…' : 'Saving to DuckDB...'
+                      : isRu ? 'Сохранить в DuckDB' : 'Save to DuckDB'}
+                  </span>
                 </button>
               </div>
             </div>

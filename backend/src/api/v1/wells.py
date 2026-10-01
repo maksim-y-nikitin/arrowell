@@ -1,16 +1,9 @@
 import math
-from datetime import datetime, timezone
-from pathlib import Path
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-import arrowell_engine
-from arrowell_engine.coords import GeodeticEngine
-from arrowell_engine.geomag.calculator import GeomagneticModelEngine
-from arrowell_engine.geomag.service import GeomagneticReferenceService
 from core.database import get_db
 from core.settings import settings
 from crud.wellbore import (
@@ -22,6 +15,7 @@ from crud.wellbore import (
     get_stations_by_well,
     get_well_by_id,
     sync_survey_set_trajectory,
+    upsert_geomag_reference
 )
 from models.wellbore import SurveyStation
 from schemas.hierarchy import FieldResponse
@@ -30,11 +24,14 @@ from schemas.survey import (
     AntiCollisionScanResponse,
     BhaConfigSchema,
     EouResponseSchema,
+    GeomagReferenceSchema,
     MsaConfigSchema,
     RawStationSensorSchema,
     SurveyStationCreate,
     SurveyStationResponse,
 )
+from schemas.survey import GeomagCalcRequest, GeomagCalcResponse
+from services.directional import calculate_geomag_reference_mwdcore
 from services.directional import (
     calculate_uncertainty_mwdcore,
     calculate_well_sag_mwdcore,
@@ -465,80 +462,6 @@ def remove_well_station(
     return {"status": "success", "deleted_station_id": station_id}
 
 
-class GeomagCalcRequest(BaseModel):
-    latitude: float = Field(..., description="Latitude in degrees (-90 to 90)")
-    longitude: float = Field(..., description="Longitude in degrees (-180 to 180)")
-    altitude_m: float = Field(0.0, description="Altitude above MSL in meters")
-    model: str = Field("WMM2025", description="Model name: WMM2025, IGRF14, or WMMHR2025")
-    date_iso: Optional[str] = Field(None, description="ISO formatted date")
-
-
-class GeomagCalcResponse(BaseModel):
-    model: str
-    b_total_ref: float
-    dip_ref: float
-    declination: float
-    grid_convergence: float
-    g_total_ref: float
-    g_ms2: float
-
-
-@router.post(
-    "/calculate-geomag-reference",
-    response_model=GeomagCalcResponse,
-)
-def compute_geomag_reference(payload: GeomagCalcRequest):
-    if payload.date_iso:
-        parsed_dt = datetime.fromisoformat(payload.date_iso)
-        if parsed_dt.tzinfo is None:
-            target_date = parsed_dt.replace(tzinfo=timezone.utc)
-        else:
-            target_date = parsed_dt.astimezone(timezone.utc)
-    else:
-        target_date = datetime.now(timezone.utc)
-    calc_date = target_date.date()
-
-    g_val = GeomagneticReferenceService.normal_gravity_wgs84(payload.latitude)
-    g_total_ref = g_val / 9.80665
-    conv_deg = GeodeticEngine.calculate_meridian_convergence(payload.latitude, payload.longitude)
-
-    mod_name = payload.model.replace(" ", "").replace("-", "").lower()
-    models_dir = Path(arrowell_engine.__file__).parent / "geomag" / "assets" / "models"
-    npz_candidate = models_dir / f"{mod_name}.npz"
-    if not npz_candidate.exists():
-        npz_candidate = models_dir / "wmm2025.npz"
-
-    if npz_candidate.exists():
-        engine = GeomagneticModelEngine(npz_candidate)
-        mag = engine.calculate(
-            latitude_deg=payload.latitude,
-            longitude_deg=payload.longitude,
-            altitude_meters=payload.altitude_m,
-            survey_date=calc_date,
-        )
-        b_total = mag.total_field_nt
-        dip = mag.dip_deg
-        dec = mag.declination_deg
-    else:
-        geomag_srv = GeomagneticReferenceService()
-        b_total, dip, dec = geomag_srv.get_magnetic_reference(
-            lat_deg=payload.latitude,
-            lon_deg=payload.longitude,
-            alt_meters=payload.altitude_m,
-            survey_date=calc_date,
-        )
-
-    return GeomagCalcResponse(
-        model=payload.model,
-        b_total_ref=round(float(b_total), 1),
-        dip_ref=round(float(dip), 2),
-        declination=round(float(dec), 2),
-        grid_convergence=round(float(conv_deg), 2),
-        g_total_ref=round(float(g_total_ref), 4),
-        g_ms2=round(float(g_val), 4),
-    )
-
-
 @router.post(
     "/{well_id}/run-anti-collision",
     response_model=AntiCollisionScanResponse,
@@ -582,3 +505,87 @@ def run_anti_collision_endpoint(
         dip_ref_deg=req.dip_ref_deg,
         declination_deg=req.declination_deg,
     )
+
+@router.get("/{well_id}/geomag-reference", response_model=GeomagReferenceSchema)
+def read_well_geomag_reference(well_id: str, db: Session = Depends(get_db)):
+    """Fetch current geomagnetic and ISCWSA model parameters stored in DuckDB."""
+    well = get_well_by_id(db, well_id)
+    if not well:
+        raise HTTPException(status_code=404, detail=f"Wellbore '{well_id}' not found")
+
+    geo_ref = get_geomag_ref_by_pad_id(db, well.pad_id)
+    if not geo_ref:
+        return GeomagReferenceSchema()
+    return geo_ref
+
+
+@router.put("/{well_id}/geomag-reference", response_model=GeomagReferenceSchema)
+def update_well_geomag_reference(
+    well_id: str,
+    payload: GeomagReferenceSchema,
+    db: Session = Depends(get_db),
+):
+    """Save user-assigned geomagnetic model, error model, reference values and deltas into DuckDB."""
+    well = get_well_by_id(db, well_id)
+    if not well:
+        raise HTTPException(status_code=404, detail=f"Wellbore '{well_id}' not found")
+
+    saved_ref = upsert_geomag_reference(db, pad_id=well.pad_id, data=payload.model_dump())
+
+    # Re-synchronize survey station QC flags against updated reference and delta tolerances
+    prop_az = well.proposal_azimuth or 0.0
+    sync_survey_set_trajectory(db, well_id=well_id, survey_type="raw", proposal_azimuth=prop_az)
+    sync_survey_set_trajectory(db, well_id=well_id, survey_type="corrected", proposal_azimuth=prop_az)
+
+    return saved_ref
+
+
+@router.post("/{well_id}/run-msa", response_model=List[SurveyStationResponse])
+def execute_well_msa(
+    well_id: str,
+    payload: Optional[MsaConfigSchema] = None,
+    db: Session = Depends(get_db),
+):
+    well = get_well_by_id(db, well_id)
+    if not well:
+        raise HTTPException(status_code=404, detail=f"Wellbore '{well_id}' not found")
+
+    raw_stations = _get_well_stations_response(db=db, well_id=well_id, survey_type="raw", include_eou=False)
+    if len(raw_stations) < 4:
+        raise HTTPException(status_code=400, detail="Minimum 4 raw stations required for MSA")
+
+    # Fetch reference field parameters and error model strictly from DuckDB
+    geo_ref = get_geomag_ref_by_pad_id(db, well.pad_id)
+    b_ref = geo_ref.b_total_ref if geo_ref else settings.DEFAULT_B_TOTAL_REF
+    dip_ref = geo_ref.dip_ref if geo_ref else settings.DEFAULT_DIP_REF
+    g_ref = geo_ref.g_total_ref if geo_ref else 1.0000
+    dec = geo_ref.declination if geo_ref else settings.DEFAULT_DECLINATION
+    grid = geo_ref.grid_convergence if geo_ref else settings.DEFAULT_GRID_CONVERGENCE
+
+    cfg = payload or MsaConfigSchema()
+    model = cfg.geomag_model or (geo_ref.model if geo_ref else settings.DEFAULT_GEOMAG_MODEL)
+    error_model = cfg.error_model or (geo_ref.error_model if geo_ref and hasattr(geo_ref, 'error_model') else "ISCWSA_MWD_REV4")
+    gens = cfg.cma_generations or cfg.max_iter or 100
+
+    msa_res = run_msa_mwdcore(
+        stations=raw_stations,
+        b_total_ref=b_ref,
+        dip_ref_deg=dip_ref,
+        g_total_ref=g_ref,
+        declination_deg=dec,
+        grid_convergence_deg=grid,
+        geomag_model=model,
+        iscwsa_model_name=error_model,
+        cma_generations=gens,
+        enable_misalignment=cfg.enable_misalignment,
+        enable_ref_corrections=cfg.enable_ref_corrections,
+    )
+
+@router.post(
+    "/calculate-geomag-reference",
+    response_model=GeomagCalcResponse,
+    summary="Calculate reference field and QC tolerances by geodetic coordinates",
+)
+def compute_geomag_reference(payload: GeomagCalcRequest):
+    """Proxy request to directional service layer without loading models in API router."""
+    return calculate_geomag_reference_mwdcore(payload)

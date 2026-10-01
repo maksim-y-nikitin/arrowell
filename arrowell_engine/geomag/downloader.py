@@ -1,29 +1,29 @@
-"""Automated multi-model downloader and binary compiler for:
-  1. Geomagnetic Field Models (WMM2025, WMMHR2025, IGRF-14).
-  2. ISCWSA / OWSG Tool Error Models (Rev 4, Rev 5.11, MWD+SAG, MWD+IFR).
+"""Automated multi-model downloader and binary compiler for Geomagnetic Field Models:
+  1. WMM2025 (Standard degree 12).
+  2. WMMHR2025 (High Resolution degree 133).
+  3. IGRF-14 (IAGA Scientific Standard).
 
 Features:
-  - Fetches from official ISCWSA GitHub / NOAA / IAGA endpoints.
-  - Self-healing offline compilation for standard industry tool-codes.
-  - Generates compact, typed JSON & NPZ files for runtime evaluation.
+  - Fetches from official NOAA / IAGA / GeographicLib mirrors.
+  - Automatically parses ASCII .COF files and IAGA coefficient tables.
+  - Compiles models into compact, optimized .npz binary archives for instant evaluation.
 """
 
 import importlib.util
 import io
-import json
-import math
 import shutil
 import urllib.request
 import zipfile
-from dataclasses import asdict, dataclass
-from enum import Enum
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Optional
 
 import numpy as np
 
 HTTP_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+    "User-Agent": (
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+    )
 }
 
 # =====================================================================
@@ -48,95 +48,12 @@ GEOMAG_SOURCES = {
     },
 }
 
-# =====================================================================
-# 2. ISCWSA ERROR MODEL DEFINITIONS & BASELINE DATASETS
-# =====================================================================
-class ErrorPropagationMode(str, Enum):
-    RANDOM = "R"      # Random across survey stations
-    SYSTEMATIC = "S"  # Systematic within BHA run
-    WELL = "W"        # Systematic across entire well
-    GLOBAL = "G"      # Global bias across all wells in field/region
-
-
-@dataclass(slots=True, frozen=True)
-class IscwsaErrorTerm:
-    mnemonic: str
-    weight_func: str
-    magnitude_1sigma: float
-    unit: str
-    mode: ErrorPropagationMode
-    description: str
-
-
-DEG_TO_RAD = math.pi / 180.0
-
-# Встроенный эталонный каталог (ISCWSA OWSG Rev 4 / Rev 5.11)
-# Используется как offline fallback и проверочный эталон
-CORE_ISCWSA_MODELS: Dict[str, List[IscwsaErrorTerm]] = {
-    "ISCWSA_MWD_REV4": [
-        IscwsaErrorTerm("DRFR", "DREF", 0.35, "m", ErrorPropagationMode.RANDOM, "Depth reference random error"),
-        IscwsaErrorTerm("DSFS", "DSF", 0.00056, "-", ErrorPropagationMode.SYSTEMATIC, "Depth scale factor"),
-        IscwsaErrorTerm("DSTG", "DST", 2.2e-7, "1/m", ErrorPropagationMode.GLOBAL, "Depth temperature/stretch"),
-        IscwsaErrorTerm("ABXY-TI1S", "ABXY-TI1", 0.004, "m/s2", ErrorPropagationMode.SYSTEMATIC, "XY Accel bias 1"),
-        IscwsaErrorTerm("ABXY-TI2S", "ABXY-TI2", 0.004, "m/s2", ErrorPropagationMode.SYSTEMATIC, "XY Accel bias 2"),
-        IscwsaErrorTerm("ABZ", "ABZ", 0.004, "m/s2", ErrorPropagationMode.SYSTEMATIC, "Z Accel bias"),
-        IscwsaErrorTerm("ASXY-TI1S", "ASXY-TI1", 0.0005, "-", ErrorPropagationMode.SYSTEMATIC, "XY Accel scale factor 1"),
-        IscwsaErrorTerm("ASXY-TI2S", "ASXY-TI2", 0.0005, "-", ErrorPropagationMode.SYSTEMATIC, "XY Accel scale factor 2"),
-        IscwsaErrorTerm("ASXY-TI3S", "ASXY-TI3", 0.0005, "-", ErrorPropagationMode.SYSTEMATIC, "XY Accel scale factor 3"),
-        IscwsaErrorTerm("ASZ", "ASZ", 0.0005, "-", ErrorPropagationMode.SYSTEMATIC, "Z Accel scale factor"),
-        IscwsaErrorTerm("MBXY-TI1S", "MBXY-TI1", 70.0, "nT", ErrorPropagationMode.SYSTEMATIC, "XY Mag bias 1"),
-        IscwsaErrorTerm("MBXY-TI2S", "MBXY-TI2", 70.0, "nT", ErrorPropagationMode.SYSTEMATIC, "XY Mag bias 2"),
-        IscwsaErrorTerm("MBZ", "MBZ", 70.0, "nT", ErrorPropagationMode.SYSTEMATIC, "Z Mag bias (cross-axial)"),
-        IscwsaErrorTerm("MSXY-TI1S", "MSXY-TI1", 0.0016, "-", ErrorPropagationMode.SYSTEMATIC, "XY Mag scale factor 1"),
-        IscwsaErrorTerm("MSXY-TI2S", "MSXY-TI2", 0.0016, "-", ErrorPropagationMode.SYSTEMATIC, "XY Mag scale factor 2"),
-        IscwsaErrorTerm("MSXY-TI3S", "MSXY-TI3", 0.0016, "-", ErrorPropagationMode.SYSTEMATIC, "XY Mag scale factor 3"),
-        IscwsaErrorTerm("MSZ", "MSZ", 0.0016, "-", ErrorPropagationMode.SYSTEMATIC, "Z Mag scale factor"),
-        IscwsaErrorTerm("AMIL", "AMIL", 220.0, "nT", ErrorPropagationMode.SYSTEMATIC, "Axial drillstring magnetization"),
-        IscwsaErrorTerm("SAG", "SAG", 0.20 * DEG_TO_RAD, "rad", ErrorPropagationMode.SYSTEMATIC, "BHA sag deflection"),
-        IscwsaErrorTerm("XYM1", "XYM1", 0.10 * DEG_TO_RAD, "rad", ErrorPropagationMode.SYSTEMATIC, "BHA misalignment 1"),
-        IscwsaErrorTerm("XYM2", "XYM2", 0.10 * DEG_TO_RAD, "rad", ErrorPropagationMode.SYSTEMATIC, "BHA misalignment 2"),
-        IscwsaErrorTerm("XYM3", "XYM3", 0.10 * DEG_TO_RAD, "rad", ErrorPropagationMode.SYSTEMATIC, "BHA misalignment 3"),
-        IscwsaErrorTerm("XYM4", "XYM4", 0.10 * DEG_TO_RAD, "rad", ErrorPropagationMode.SYSTEMATIC, "BHA misalignment 4"),
-        IscwsaErrorTerm("DECG", "AZ", 0.36 * DEG_TO_RAD, "rad", ErrorPropagationMode.GLOBAL, "Magnetic declination constant"),
-        IscwsaErrorTerm("DBHG", "DBH", 5000.0 * DEG_TO_RAD, "rad*nT", ErrorPropagationMode.GLOBAL, "Magnetic declination field-dependent"),
-        IscwsaErrorTerm("DECR", "AZ", 0.10 * DEG_TO_RAD, "rad", ErrorPropagationMode.RANDOM, "Declination random noise"),
-        IscwsaErrorTerm("DBHR", "DBH", 3000.0 * DEG_TO_RAD, "rad*nT", ErrorPropagationMode.RANDOM, "Declination random field-dependent"),
-    ],
-    "ISCWSA_MWD_SAG_REV4": [
-        # Улучшенный прогиб КНБК (SAG снижен с 0.20° до 0.08° благодаря расчету BHA Sag)
-        IscwsaErrorTerm("SAG", "SAG", 0.08 * DEG_TO_RAD, "rad", ErrorPropagationMode.SYSTEMATIC, "Calculated BHA sag residual"),
-    ],
-    "ISCWSA_MWD_IFR1_REV4": [
-        # In-Field Referencing: сниженная неопределенность опорного поля и намагниченности КНБК
-        IscwsaErrorTerm("AMIL", "AMIL", 100.0, "nT", ErrorPropagationMode.SYSTEMATIC, "Axial DSI with IFR1 QC"),
-        IscwsaErrorTerm("DECG", "AZ", 0.15 * DEG_TO_RAD, "rad", ErrorPropagationMode.GLOBAL, "IFR1 local declination constant"),
-        IscwsaErrorTerm("DBHG", "DBH", 1500.0 * DEG_TO_RAD, "rad*nT", ErrorPropagationMode.GLOBAL, "IFR1 declination field-dependent"),
-    ],
-    "ISCWSA_MWD_REV5": [
-        # ISCWSA Rev 5.11: Обновленные параметры масштабирования и разделение поперечных шумов
-        IscwsaErrorTerm("DRFR", "DREF", 0.35, "m", ErrorPropagationMode.RANDOM, "Depth reference random error"),
-        IscwsaErrorTerm("DSFS", "DSF", 0.00056, "-", ErrorPropagationMode.SYSTEMATIC, "Depth scale factor"),
-        IscwsaErrorTerm("DSTG", "DST", 2.2e-7, "1/m", ErrorPropagationMode.GLOBAL, "Depth stretch"),
-        IscwsaErrorTerm("ABXY-TI1S", "ABXY-TI1", 0.0035, "m/s2", ErrorPropagationMode.SYSTEMATIC, "XY Accel bias 1 (Rev 5.11)"),
-        IscwsaErrorTerm("ABXY-TI2S", "ABXY-TI2", 0.0035, "m/s2", ErrorPropagationMode.SYSTEMATIC, "XY Accel bias 2 (Rev 5.11)"),
-        IscwsaErrorTerm("ABZ", "ABZ", 0.0035, "m/s2", ErrorPropagationMode.SYSTEMATIC, "Z Accel bias"),
-        IscwsaErrorTerm("AMIL", "AMIL", 200.0, "nT", ErrorPropagationMode.SYSTEMATIC, "Axial drillstring magnetization (Rev 5)"),
-        IscwsaErrorTerm("SAG", "SAG", 0.18 * DEG_TO_RAD, "rad", ErrorPropagationMode.SYSTEMATIC, "BHA sag generic"),
-        IscwsaErrorTerm("DECG", "AZ", 0.30 * DEG_TO_RAD, "rad", ErrorPropagationMode.GLOBAL, "Global declination baseline"),
-        IscwsaErrorTerm("DBHG", "DBH", 4500.0 * DEG_TO_RAD, "rad*nT", ErrorPropagationMode.GLOBAL, "Declination horizontal intensity term"),
-    ],
-}
-
-ISCWSA_ONLINE_SOURCES = {
-    "schema_url": "https://raw.githubusercontent.com/iscwsa/error-models/main/schema/error-model.schema.json",
-    "mwd_rev5_url": "https://raw.githubusercontent.com/iscwsa/error-models/main/models/ISCWSA_MWD_Rev5.json",
-}
 
 # =====================================================================
-# 3. HELPER FUNCTIONS
+# 2. HELPER FUNCTIONS
 # =====================================================================
 def download_stream(url: str, timeout: int = 30) -> Optional[bytes]:
-    """Download binary data following redirects with custom headers."""
+    """Download binary data following redirects with custom user-agent headers."""
     req = urllib.request.Request(url, headers=HTTP_HEADERS)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -163,7 +80,7 @@ def extract_from_local_package(package_name: str, glob_pattern: str, target_path
 
 
 def save_archive_cof(zip_bytes: bytes, target_cof_path: Path) -> bool:
-    """Extract .COF coefficient file from a ZIP archive in memory."""
+    """Extract .COF coefficient file from an in-memory ZIP archive."""
     try:
         with zipfile.ZipFile(io.BytesIO(zip_bytes)) as archive:
             for member in archive.namelist():
@@ -288,7 +205,7 @@ def compile_igrf_table(table_path: Path, npz_path: Path) -> bool:
 
 
 # =====================================================================
-# 4. GEOMAGNETIC SYNCHRONIZATION STEPS
+# 3. GEOMAGNETIC SYNCHRONIZATION STEPS
 # =====================================================================
 def sync_wmm_standard(models_dir: Path):
     """Retrieve and build WMM2025 (Standard)."""
@@ -296,7 +213,7 @@ def sync_wmm_standard(models_dir: Path):
     cof_file = models_dir / info["output_cof"]
     npz_file = models_dir / info["output_npz"]
 
-    print("\n[1/4] Processing WMM2025 (Standard)...")
+    print("\n[1/3] Processing WMM2025 (Standard)...")
     if npz_file.exists():
         print(f"    Binary already up to date: {npz_file.name}")
         return
@@ -321,7 +238,7 @@ def sync_wmm_high_resolution(models_dir: Path):
     cof_file = models_dir / info["output_cof"]
     npz_file = models_dir / info["output_npz"]
 
-    print("\n[2/4] Processing WMMHR2025 (High Resolution - Degree 133)...")
+    print("\n[2/3] Processing WMMHR2025 (High Resolution - Degree 133)...")
     if npz_file.exists():
         print(f"    Binary already up to date: {npz_file.name}")
         return
@@ -354,7 +271,7 @@ def sync_igrf14(models_dir: Path):
     txt_file = models_dir / info["output_txt"]
     npz_file = models_dir / info["output_npz"]
 
-    print("\n[3/4] Processing IGRF-14 (IAGA Scientific Standard)...")
+    print("\n[3/3] Processing IGRF-14 (IAGA Scientific Standard)...")
     if npz_file.exists():
         print(f"    Binary already up to date: {npz_file.name}")
         return
@@ -370,80 +287,20 @@ def sync_igrf14(models_dir: Path):
 
 
 # =====================================================================
-# 5. ISCWSA ERROR MODEL SYNCHRONIZATION
-# =====================================================================
-def sync_iscwsa_tool_models(target_dir: Path):
-    """Download and compile ISCWSA OWSG tool error models."""
-    print("\n[4/4] Processing ISCWSA / OWSG Tool Error Models...")
-    error_models_dir = target_dir / "error_models"
-    error_models_dir.mkdir(parents=True, exist_ok=True)
-
-    # 1. Попытка загрузить актуальную JSON-схему из GitHub ISCWSA
-    schema_path = error_models_dir / "iscwsa-schema.json"
-    if not schema_path.exists():
-        raw_schema = download_stream(ISCWSA_ONLINE_SOURCES["schema_url"])
-        if raw_schema:
-            schema_path.write_bytes(raw_schema)
-            print("    -> Downloaded official ISCWSA JSON Schema")
-
-    # 2. Попытка загрузить модель Rev5 с GitHub
-    rev5_online_path = error_models_dir / "ISCWSA_MWD_Rev5_online.json"
-    if not rev5_online_path.exists():
-        raw_model = download_stream(ISCWSA_ONLINE_SOURCES["mwd_rev5_url"])
-        if raw_model:
-            rev5_online_path.write_bytes(raw_model)
-            print("    -> Fetched official ISCWSA MWD Rev 5 JSON")
-
-    # 3. Компиляция и сборка набора моделей (Self-healing fallback)
-    compiled_catalog = {}
-    for model_name, terms in CORE_ISCWSA_MODELS.items():
-        model_file = error_models_dir / f"{model_name.lower()}.json"
-        terms_dicts = [asdict(t) for t in terms]
-
-        # Если это производная модель (SAG или IFR), объединяем с базовой Rev 4
-        if "SAG" in model_name or "IFR" in model_name:
-            base_terms = {t.mnemonic: asdict(t) for t in CORE_ISCWSA_MODELS["ISCWSA_MWD_REV4"]}
-            for mod_term in terms:
-                base_terms[mod_term.mnemonic] = asdict(mod_term)
-            final_terms = list(base_terms.values())
-        else:
-            final_terms = terms_dicts
-
-        model_payload = {
-            "model_name": model_name,
-            "revision": "5.11" if "REV5" in model_name else "4.0",
-            "source": "ISCWSA / OWSG Committee Open Standard",
-            "terms_count": len(final_terms),
-            "terms": final_terms,
-        }
-
-        with open(model_file, "w", encoding="utf-8") as f:
-            json.dump(model_payload, f, indent=2, ensure_ascii=False)
-
-        compiled_catalog[model_name] = model_payload
-
-    # Сохраняем сводный бинарный кэш для моментальной загрузки рантаймом
-    catalog_npz = error_models_dir / "iscwsa_catalog.npz"
-    np.savez_compressed(catalog_npz, catalog=json.dumps(compiled_catalog))
-    print(f"    -> Compiled {len(compiled_catalog)} ISCWSA tool models into {catalog_npz.name}")
-
-
-# =====================================================================
-# 6. MAIN ENTRY POINT
+# 4. MAIN ENTRY POINT
 # =====================================================================
 def main():
     target_directory = Path(__file__).resolve().parent / "assets" / "models"
     target_directory.mkdir(parents=True, exist_ok=True)
 
     print("=" * 70)
-    print(" ArroWell Universal Model Synchronizer: Geomag & ISCWSA Error Models")
+    print(" ArroWell Geomagnetic Field Models Synchronizer")
     print(f" Target Directory: {target_directory}")
     print("=" * 70)
 
     sync_wmm_standard(target_directory)
     sync_wmm_high_resolution(target_directory)
     sync_igrf14(target_directory)
-    sync_iscwsa_tool_models(target_directory)
 
     print("\n" + "=" * 70)
     print(" Summary of Available Compiled Models:")
@@ -451,11 +308,15 @@ def main():
         size_kb = b.stat().st_size / 1024.0
         rel_path = b.relative_to(target_directory)
         print(f"  * {str(rel_path):<35} ({size_kb:6.1f} KB)")
-    for j in sorted((target_directory / "error_models").glob("*.json")):
-        size_kb = j.stat().st_size / 1024.0
-        rel_path = j.relative_to(target_directory)
-        print(f"  * {str(rel_path):<35} ({size_kb:6.1f} KB)")
     print("=" * 70)
+
+
+# Backward compatibility resolver for legacy imports from this module
+def __getattr__(name: str):
+    """Redirect legacy ISCWSA error model imports to their canonical trajectory location."""
+    if name in ("CORE_ISCWSA_MODELS", "IscwsaErrorTerm", "ErrorPropagationMode"):
+        return locals()[name]
+    raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
 
 
 if __name__ == "__main__":

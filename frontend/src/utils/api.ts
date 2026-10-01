@@ -114,6 +114,22 @@ export interface GeomagReferenceResponse {
   grid_convergence: number;
   g_total_ref: number;
   g_ms2: number;
+  tolerance_g?: number;
+  tolerance_b?: number;
+  tolerance_dip?: number;
+}
+
+export interface GeomagReferenceUpdatePayload {
+  model: string;
+  error_model: string;
+  b_total_ref: number;
+  dip_ref: number;
+  declination: number;
+  grid_convergence: number;
+  g_total_ref: number;
+  tolerance_g: number;
+  tolerance_b: number;
+  tolerance_dip: number;
 }
 
 export interface MsaConfig {
@@ -295,4 +311,27 @@ export async function calculateGeomagReference(
     throw new Error(`Failed to calculate geomagnetic reference: ${res.statusText}`);
   }
   return res.json();
+}
+
+export async function updateWellGeomagReference(
+  wellId: string,
+  payload: GeomagReferenceUpdatePayload
+): Promise<void> {
+  const res = await fetch(`${API_BASE_URL}/wells/${wellId}/geomag-reference`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok) {
+    let errorDetail = res.statusText;
+    try {
+      const errJson = await res.json();
+      if (errJson?.detail) {
+        errorDetail = typeof errJson.detail === 'string' ? errJson.detail : JSON.stringify(errJson.detail);
+      }
+    } catch {
+    }
+    throw new Error(`Failed to update geomagnetic reference (${res.status}): ${errorDetail}`);
+  }
 }

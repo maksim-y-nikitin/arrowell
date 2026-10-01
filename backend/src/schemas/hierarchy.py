@@ -32,14 +32,30 @@ class PadBase(BaseModel):
     datum: str = "MSL WGS84"
 
 
-class PadResponse(PadBase):
-    """Pad entity response with child wells."""
-    id: str
-    field_id: str
-    wells: Optional[List[WellResponse]] = None
+class GeomagneticReferenceResponse(BaseModel):
+    id: int
+    pad_id: str
+    model: str
+    error_model: str
+    b_total_ref: float
+    dip_ref: float
+    declination: float
+    grid_convergence: float
+    g_total_ref: float
+    tolerance_g: float
+    tolerance_b: float
+    tolerance_dip: float
 
     model_config = ConfigDict(from_attributes=True)
 
+
+class PadResponse(PadBase):
+    id: str
+    field_id: str
+    wells: Optional[List[WellResponse]] = None
+    geomagnetic_ref: Optional[GeomagneticReferenceResponse] = None
+
+    model_config = ConfigDict(from_attributes=True)
 
 class FieldResponse(BaseModel):
     """Top-level field entity response with child pads and wells."""
