@@ -10,6 +10,7 @@ from models.wellbore import Field, Pad, Well, SurveyStation, GeomagneticReferenc
 
 
 def get_full_hierarchy(db: Session) -> List[Field]:
+    """Retrieve full field-pad-well hierarchy with eager-loaded relationships."""
     stmt = (
         select(Field)
         .options(selectinload(Field.pads).selectinload(Pad.wells))
@@ -19,20 +20,23 @@ def get_full_hierarchy(db: Session) -> List[Field]:
 
 
 def get_well_by_id(db: Session, well_id: str) -> Optional[Well]:
+    """Fetch wellbore entity by its unique ID."""
     stmt = select(Well).where(Well.id == well_id)
     return db.scalar(stmt)
 
 
 def get_geomag_ref_by_pad_id(db: Session, pad_id: str) -> Optional[GeomagneticReference]:
+    """Fetch geomagnetic reference parameters associated with a pad."""
     stmt = select(GeomagneticReference).where(GeomagneticReference.pad_id == pad_id)
     return db.scalar(stmt)
 
 
 def get_stations_by_well(
-    db: Session,
-    well_id: str,
-    survey_type: Optional[str] = None
+        db: Session,
+        well_id: str,
+        survey_type: Optional[str] = None
 ) -> List[SurveyStation]:
+    """Query survey stations ordered by measured depth."""
     stmt = select(SurveyStation).where(SurveyStation.well_id == well_id)
     if survey_type:
         stmt = stmt.where(SurveyStation.survey_type == survey_type)
@@ -41,6 +45,7 @@ def get_stations_by_well(
 
 
 def create_survey_station(db: Session, station_data: dict) -> SurveyStation:
+    """Create a single survey station (used for single manual additions)."""
     station = SurveyStation(**station_data)
     db.add(station)
     db.commit()
@@ -48,7 +53,16 @@ def create_survey_station(db: Session, station_data: dict) -> SurveyStation:
     return station
 
 
+def create_survey_stations_bulk(db: Session, stations_data: List[dict]) -> List[SurveyStation]:
+    """Batch-insert multiple survey stations in a single transaction without per-row commit overhead."""
+    stations = [SurveyStation(**data) for data in stations_data]
+    db.add_all(stations)
+    db.flush()
+    return stations
+
+
 def delete_survey_station(db: Session, station_id: int, well_id: str) -> bool:
+    """Delete a survey station and cascade delete any child/corrected stations."""
     stmt = select(SurveyStation).where(
         SurveyStation.id == station_id,
         SurveyStation.well_id == well_id,
@@ -69,6 +83,7 @@ def delete_survey_station(db: Session, station_id: int, well_id: str) -> bool:
 
 
 def clear_corrected_stations(db: Session, well_id: str) -> None:
+    """Purge all corrected stations for a wellbore."""
     stmt = delete(SurveyStation).where(
         SurveyStation.well_id == well_id,
         SurveyStation.survey_type == "corrected",
@@ -78,11 +93,21 @@ def clear_corrected_stations(db: Session, well_id: str) -> None:
 
 
 def sync_survey_set_trajectory(
-    db: Session,
-    well_id: str,
-    survey_type: str = "raw",
-    proposal_azimuth: float = 55.0,
+        db: Session,
+        well_id: str,
+        survey_type: str = "raw",
+        proposal_azimuth: float = 55.0,
+        commit_now: bool = True,
 ) -> List[SurveyStation]:
+    """Calculate 3D Minimum Curvature Method (MCM) trajectory and QC flags in memory.
+
+    Args:
+        db: Database session.
+        well_id: Target wellbore ID.
+        survey_type: Survey type filter ('raw' or 'corrected').
+        proposal_azimuth: Azimuth line for vertical section projection.
+        commit_now: If False, defers db.commit() to the caller for batching.
+    """
     from core.settings import settings
 
     well = get_well_by_id(db, well_id)
@@ -120,12 +145,13 @@ def sync_survey_set_trajectory(
         s.closure_dist = round(float(traj.closure_dist[i]), 2)
         s.closure_azim = round(float(traj.closure_azim[i]), 2)
 
-        s.g_total = round(float(math.sqrt(s.gx**2 + s.gy**2 + s.gz**2)), 4)
-        s.b_total = round(float(math.hypot(s.bx, s.by, s.bz)), 1)
         g_len = math.sqrt(s.gx ** 2 + s.gy ** 2 + s.gz ** 2) or 1.0
         b_len = math.hypot(s.bx, s.by, s.bz) or 1.0
         dot_gb = (s.gx * s.bx + s.gy * s.by + s.gz * s.bz) / (g_len * b_len)
         dot_gb = max(-1.0, min(1.0, dot_gb))
+
+        s.g_total = round(float(g_len), 4)
+        s.b_total = round(float(b_len), 1)
         s.dip_angle = round(float(math.degrees(math.asin(dot_gb))), 2)
 
         s.delta_g = round(s.g_total - g_ref, 4)
@@ -138,5 +164,7 @@ def sync_survey_set_trajectory(
             abs(s.delta_dip) <= tol_dip
         )
 
-    db.commit()
+    if commit_now:
+        db.commit()
+
     return stations

@@ -46,6 +46,7 @@ export const GeomagneticSettingsModal: React.FC<SettingsModalProps> = ({ isOpen,
   const [activeTab, setActiveTab] = useState<SettingsTab>('location');
   const [isAutoCalculating, setIsAutoCalculating] = useState<boolean>(false);
 
+  // Wellhead & Datum state
   const [padName, setPadName] = useState<string>(activePad?.name || '');
   const [wellName, setWellName] = useState<string>(activeWell?.name || '');
   const [slot, setSlot] = useState<string>(activeWell?.slot || 'Slot #1');
@@ -56,6 +57,7 @@ export const GeomagneticSettingsModal: React.FC<SettingsModalProps> = ({ isOpen,
   const [datum, setDatum] = useState<string>(activePad?.datum || 'MSL WGS-84');
   const [targetFormation, setTargetFormation] = useState<string>(activeWell?.targetFormation || 'BV8');
 
+  // Geomagnetic reference state
   const [model, setModel] = useState<GeomagneticReference['model']>(geoRef?.model || 'WMM 2025');
   const [bRef, setBRef] = useState<number>(geoRef?.bTotalRef ?? 52480);
   const [dipRef, setDipRef] = useState<number>(geoRef?.dipRef ?? 72.15);
@@ -65,6 +67,7 @@ export const GeomagneticSettingsModal: React.FC<SettingsModalProps> = ({ isOpen,
   const [tolB, setTolB] = useState<number>(geoRef?.toleranceB ?? 200);
   const [tolDip, setTolDip] = useState<number>(geoRef?.toleranceDip ?? 0.30);
 
+  // BHA geometry state
   const [collarOd, setCollarOd] = useState<number>(bhaConfig?.collarOdMm ?? 171.5);
   const [collarId, setCollarId] = useState<number>(bhaConfig?.collarIdMm ?? 71.4);
   const [sensorToBit, setSensorToBit] = useState<number>(bhaConfig?.sensorToBitM ?? 14.2);
@@ -72,7 +75,8 @@ export const GeomagneticSettingsModal: React.FC<SettingsModalProps> = ({ isOpen,
   const [mudWeight, setMudWeight] = useState<number>(bhaConfig?.mudWeightGcm3 ?? 1.20);
   const [material, setMaterial] = useState<BhaConfig['bhaMaterial']>(bhaConfig?.bhaMaterial ?? 'nm_steel');
 
-  const [maxIter, setMaxIter] = useState<number>(msaConfig?.maxIter || 70);
+  // MSA engine configuration (Default: 100 generations for LRA-CMA convergence)
+  const [maxIter, setMaxIter] = useState<number>(msaConfig?.maxIter || 100);
   const [enableMisalignment, setEnableMisalignment] = useState<boolean>(msaConfig?.enableMisalignment ?? true);
   const [enableRefCorrections, setEnableRefCorrections] = useState<boolean>(msaConfig?.enableRefCorrections ?? true);
 
@@ -96,6 +100,7 @@ export const GeomagneticSettingsModal: React.FC<SettingsModalProps> = ({ isOpen,
 
   const airGap = Number(((rkbElevation || 0) - (glElevation || 0)).toFixed(2));
 
+  // Compute theoretical sag angle for live preview
   const previewSagAngle = calculatePhysicalSagAngle({
     collarOdMm: collarOd,
     collarIdMm: collarId,
@@ -271,7 +276,7 @@ export const GeomagneticSettingsModal: React.FC<SettingsModalProps> = ({ isOpen,
               <Cpu />
               <div>
                 <div className="nav-title whitespace-nowrap">{isRu ? 'Решатель MSA' : 'MSA Solver Engine'}</div>
-                <div className="nav-sub">CMA-ES + TRF Hybrid</div>
+                <div className="nav-sub">LRA-CMA + TRF Hybrid</div>
               </div>
             </button>
 
@@ -705,13 +710,15 @@ export const GeomagneticSettingsModal: React.FC<SettingsModalProps> = ({ isOpen,
                     <div className="field-card-head mag">
                       <Cpu />
                       <span>{isRu ? 'Вычислительное ядро MSA' : 'MSA Computation Engine'}</span>
-                      <span className="pill acc ml-auto">ISCWSA MAP Hybrid</span>
+                      <span className="pill acc ml-auto">LRA-CMA + TRF</span>
                     </div>
 
                     <div className="p-3 rounded-[var(--r2)] border border-[var(--mag-line)] bg-[var(--mag-soft)] text-[var(--fg-0)] space-y-2">
                       <div className="flex items-center justify-between">
                         <span className="font-semibold text-[13px] text-[var(--mag)]">
-                          {isRu ? 'CMA-ES + TRF (Двухстадийный гибрид)' : 'CMA-ES + TRF (Two-Stage Hybrid)'}
+                          {isRu
+                            ? 'LRA-CMA + TRF (Двухстадийный адаптивный гибрид)'
+                            : 'LRA-CMA + TRF (Two-Stage Adaptive Hybrid)'}
                         </span>
                         <span className="pill ok flex items-center gap-1">
                           <CheckCircle2 className="w-3 h-3" />
@@ -721,14 +728,15 @@ export const GeomagneticSettingsModal: React.FC<SettingsModalProps> = ({ isOpen,
 
                       <p className="text-[11.5px] leading-relaxed text-[var(--fg-1)]">
                         {isRu
-                          ? '1. Разведка оврага: Глобальный поиск методом адаптации матрицы ковариации (CMA-ES, 12 кандидатов/поколение) с байесовской регуляризацией по 1-sigma модели ISCWSA в обелённом пространстве параметров.\n2. Локальная доводка: Прецизионная квадратичная оптимизация дна оврага методом доверительных областей (TRF) в пределах мягких физических ограничений сенсора.'
-                          : '1. Ravine Exploration: Global search via Covariance Matrix Adaptation (CMA-ES, 12 candidates/gen) with ISCWSA 1-sigma Bayesian MAP regularization in whitened parameter space.\n2. Local Polish: Precision quadratic optimization on the ravine floor via Trust Region Reflective (TRF) within physical sanity bounds.'}
+                          ? '1. Глобальный адаптивный поиск: LRA-CMA (Learning Rate Adaptation) с динамическим контролем соотношения сигнал/шум (SNR) и активным сжатием ковариаций (aCMA). Предотвращает преждевременное схлопывание дисперсии и преодолевает ложные минимумы при ограниченном тулфейсе.\n2. Прецизионная доводка: Локальная квадратичная минимизация доверительными областями (TRF) в пределах мягких физических ограничений сенсора с байесовской регуляризацией ISCWSA 1-sigma.'
+                          : '1. Global Adaptive Search: LRA-CMA (Learning Rate Adaptation) with dynamic signal-to-noise (SNR) tracking and active covariance updates (aCMA). Prevents premature step collapse and circumvents local minima under restricted toolface coverage.\n2. Precision Polish: Local quadratic Trust Region Reflective (TRF) minimization within physical sanity bounds and ISCWSA 1-sigma Bayesian MAP regularization.'}
                       </p>
 
                       <div className="flex flex-wrap gap-2 pt-1 border-t border-[var(--mag-line)] text-[10.5px] font-mono text-[var(--fg-2)]">
+                        <span>✓ LRA (SNR-based)</span>
+                        <span>✓ Active Covariance (aCMA)</span>
                         <span>✓ Whitening (u = p/σ)</span>
-                        <span>✓ Защита слайд-бурения</span>
-                        <span>✓ Ковариация Cov(p) = (JᵀJ)⁻¹</span>
+                        <span>✓ Cov(p) = (JᵀJ)⁻¹</span>
                       </div>
                     </div>
                   </div>
@@ -740,18 +748,20 @@ export const GeomagneticSettingsModal: React.FC<SettingsModalProps> = ({ isOpen,
                     <div className="field-grid cols-2">
                       <div className="field">
                         <label className="field-label">
-                          {isRu ? 'Поколений CMA-ES (Макс. итераций)' : 'CMA-ES Generations (Budget)'}
+                          {isRu ? 'Поколений LRA-CMA (Бюджет поиска)' : 'LRA-CMA Generations (Budget)'}
                         </label>
                         <input
                           type="number"
-                          min={20}
-                          max={250}
+                          min={30}
+                          max={300}
                           value={maxIter}
-                          onChange={(e) => setMaxIter(parseInt(e.target.value, 10) || 70)}
+                          onChange={(e) => setMaxIter(parseInt(e.target.value, 10) || 100)}
                           className="input mono mag font-bold"
                         />
                         <span className="text-[10px] text-[var(--fg-3)] mt-1">
-                          {isRu ? 'Рекомендуется: 60–100 поколений (~800 вычислений)' : 'Recommended: 60–100 generations (~800 evaluations)'}
+                          {isRu
+                            ? 'Рекомендуется: 80–120 поколений (~1000–1500 вычислений для полной адаптации LRA)'
+                            : 'Recommended: 80–120 generations (~1000–1500 evaluations for full LRA adaptation)'}
                         </span>
                       </div>
                     </div>

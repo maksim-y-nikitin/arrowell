@@ -1,7 +1,8 @@
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Callable, Optional, Tuple
 
 import numpy as np
+from cmaes import CMA
 from scipy.optimize import least_squares
 
 from ..sensors.models import SensorCalibrationParams, apply_sensor_correction
@@ -155,110 +156,51 @@ def _compute_normalized_msa_residuals(
     return np.concatenate([res_g, res_b, res_dip, res_prior])
 
 
-class _VectorizedCmaEs:
+class _LraCmaOptimizer:
     def __init__(
-        self,
-        x0: np.ndarray,
-        sigma0: float,
-        lower_bounds: np.ndarray,
-        upper_bounds: np.ndarray,
-        max_iter: int = 70,
-        seed: int = 42,
+            self,
+            x0: np.ndarray,
+            sigma0: float,
+            lower_bounds: np.ndarray,
+            upper_bounds: np.ndarray,
+            max_iter: int = 100,
+            lr_adapt: bool = True,
+            seed: int = 42,
     ):
-        self.n = len(x0)
-        self.m = x0.copy()
-        self.sigma = float(sigma0)
-        self.lb = lower_bounds
-        self.ub = upper_bounds
         self.max_iter = max_iter
-        self.rng = np.random.default_rng(seed)
+        self.bounds = np.column_stack([lower_bounds, upper_bounds])
 
-        self.lambda_ = 4 + int(3.0 * np.log(self.n))
-        self.mu = self.lambda_ // 2
-        weights = np.log(self.mu + 0.5) - np.log(np.arange(1, self.mu + 1))
-        self.weights = weights / np.sum(weights)
-        self.mueff = 1.0 / np.sum(self.weights**2)
-
-        self.cc = (4.0 + self.mueff / self.n) / (self.n + 4.0 + 2.0 * self.mueff / self.n)
-        self.cs = (self.mueff + 2.0) / (self.n + self.mueff + 5.0)
-        self.c1 = 2.0 / ((self.n + 1.3) ** 2 + self.mueff)
-        self.cmu = min(
-            1.0 - self.c1,
-            2.0 * (self.mueff - 2.0 + 1.0 / self.mueff) / ((self.n + 2.0) ** 2 + self.mueff),
+        self.optimizer = CMA(
+            mean=x0,
+            sigma=sigma0,
+            bounds=self.bounds,
+            lr_adapt=lr_adapt,  # Включение LRA
+            seed=seed,
         )
-        self.damps = 1.0 + 2.0 * max(0.0, np.sqrt((self.mueff - 1.0) / (self.n + 1.0)) - 1.0) + self.cs
-        self.chi_n = np.sqrt(self.n) * (1.0 - 1.0 / (4.0 * self.n) + 1.0 / (21.0 * self.n**2))
 
-        self.pc = np.zeros(self.n, dtype=np.float64)
-        self.ps = np.zeros(self.n, dtype=np.float64)
-        self.B = np.eye(self.n, dtype=np.float64)
-        self.D = np.ones(self.n, dtype=np.float64)
-        self.C = np.eye(self.n, dtype=np.float64)
-
-        self.best_x = self.m.copy()
-        self.best_cost = np.inf
-
-    def optimize(self, loss_fn) -> Tuple[np.ndarray, float, int]:
+    def optimize(self, loss_fn: Callable[[np.ndarray], float]) -> Tuple[np.ndarray, float, int]:
+        best_x = self.optimizer.mean.copy()
+        best_cost = np.inf
         counteval = 0
 
         for gen in range(self.max_iter):
-            z = self.rng.standard_normal((self.lambda_, self.n))
-            y = z @ np.diag(self.D) @ self.B.T
-            candidates = self.m + self.sigma * y
+            solutions = []
+            for _ in range(self.optimizer.population_size):
+                cand = self.optimizer.ask()
+                cost = loss_fn(cand)
+                solutions.append((cand, cost))
+                counteval += 1
 
-            costs = np.empty(self.lambda_, dtype=np.float64)
-            for k in range(self.lambda_):
-                cand = candidates[k]
-                viol_lower = np.maximum(0.0, self.lb - cand)
-                viol_upper = np.maximum(0.0, cand - self.ub)
-                penalty = 1e4 * np.sum(viol_lower**2 + viol_upper**2)
+                if cost < best_cost:
+                    best_cost = float(cost)
+                    best_x = cand.copy()
 
-                cand_clipped = np.clip(cand, self.lb, self.ub)
-                costs[k] = loss_fn(cand_clipped) + penalty
+            self.optimizer.tell(solutions)
 
-            counteval += self.lambda_
+            if self.optimizer.should_stop():
+                break
 
-            idx_sort = np.argsort(costs)
-            candidates = candidates[idx_sort]
-            costs = costs[idx_sort]
-            z = z[idx_sort]
-
-            if costs[0] < self.best_cost:
-                self.best_cost = float(costs[0])
-                self.best_x = np.clip(candidates[0], self.lb, self.ub)
-
-            z_w = np.sum(self.weights[:, np.newaxis] * z[: self.mu], axis=0)
-            y_w = self.B @ np.diag(self.D) @ z_w
-            self.m += self.sigma * y_w
-
-            self.ps = (1.0 - self.cs) * self.ps + np.sqrt(self.cs * (2.0 - self.cs) * self.mueff) * (self.B @ z_w)
-            norm_ps = np.linalg.norm(self.ps)
-            self.sigma *= np.exp((self.cs / self.damps) * (norm_ps / self.chi_n - 1.0))
-
-            hsig = 1.0 if (norm_ps / np.sqrt(1.0 - (1.0 - self.cs) ** (2 * (gen + 1)))) < (
-                (1.4 + 2.0 / (self.n + 1.0)) * self.chi_n
-            ) else 0.0
-
-            self.pc = (1.0 - self.cc) * self.pc + hsig * np.sqrt(
-                self.cc * (2.0 - self.cc) * self.mueff
-            ) * y_w
-
-            artmp = (z[: self.mu] @ np.diag(self.D) @ self.B.T)
-            c_rank_mu = artmp.T @ np.diag(self.weights) @ artmp
-            c_rank_1 = np.outer(self.pc, self.pc)
-
-            self.C = (
-                (1.0 - self.c1 - self.cmu) * self.C
-                + self.c1 * (c_rank_1 + (1.0 - hsig) * self.cc * (2.0 - self.cc) * self.C)
-                + self.cmu * c_rank_mu
-            )
-
-            if gen % max(1, self.n // 10) == 0:
-                self.C = np.triu(self.C) + np.triu(self.C, 1).T
-                eigenvals, self.B = np.linalg.eigh(self.C)
-                self.D = np.sqrt(np.maximum(1e-12, eigenvals))
-
-        return self.best_x, self.best_cost, counteval
+        return best_x, best_cost, counteval
 
 
 def run_msa_optimization(
@@ -315,12 +257,13 @@ def run_msa_optimization(
         )
         return float(np.sum(res**2))
 
-    cma = _VectorizedCmaEs(
+    cma = _LraCmaOptimizer(
         x0=np.zeros(18, dtype=np.float64),
         sigma0=1.0,
         lower_bounds=u_lower,
         upper_bounds=u_upper,
         max_iter=cma_generations,
+        lr_adapt=True,
         seed=seed,
     )
     u_cma_best, _, cma_evals = cma.optimize(scalar_cma_objective)

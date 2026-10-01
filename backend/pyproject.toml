@@ -5,6 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "cmaes>=0.13.1",
     "duckdb>=1.5.5",
     "duckdb-engine>=0.17.0",
     "fastapi>=0.141.1",

@@ -20,7 +20,7 @@
   <b>ArroWell</b> is an open, cloud-native engineering workstation engineered for mission-critical wellbore positioning, downhole telemetry QA/QC, high-definition continuous inclination reconstruction, and dynamic 3D anti-collision clearance scanning.
 </p>
 <p align="center">
-  <i>Powered by the zero-dependency, pure-NumPy/SciPy computational engine: <b><code>arrowell_engine</code></b>.</i>
+  <i>Powered by the high-performance Python/NumPy/SciPy computational engine: <b><code>arrowell_engine</code></b>.</i>
 </p>
 
 <p align="center">
@@ -49,7 +49,7 @@ Modern directional drilling demands millimeter-grade mathematical rigor, millise
 **ArroWell** bridges the gap between field-level MWD operations and enterprise geonavigation:
 - **Client-Side CAD Graphics**: High-framerate WebGL/Three.js 3D viewport combined with synchronized 2D vector projections (Plan and Vertical Section) rendering true 1:1 error ellipses.
 - **Rigorous Sensor Analytics**: Multi-sigma physical boundary validation for triaxial accelerometers ($G_x, G_y, G_z$) and magnetometers ($B_x, B_y, B_z$) against authoritative geomagnetic models (**WMM2025**, **IGRF-14**, **WMMHR2025**).
-- **Industrial In-Situ Calibration**: Native implementation of two-stage hybrid Multi-Station Analysis (**CMA-ES $\to$ TRF**), analytical BHA Sag mechanics with borehole low-side contact constraints, and Short Collar Correction (**SCC**).
+- **Industrial In-Situ Calibration**: Native implementation of two-stage hybrid Multi-Station Analysis (**LRA-CMA $\to$ TRF**), analytical BHA Sag mechanics with borehole low-side contact constraints, and Short Collar Correction (**SCC**).
 - **ISCWSA-Compliant Proximity Analysis**: Full 3D Ellipsoid of Uncertainty (**EOU**) spectral eigen-decomposition and live anti-collision clearance vector calculation across complex multi-well pads.
 
 ---
@@ -86,8 +86,8 @@ Modern directional drilling demands millimeter-grade mathematical rigor, millise
   <img src="docs/images/overview.png" alt="Directional Corrections Suite Overview" width="88%" />
 </p>
 
-- **Two-Stage Hybrid MSA Engine (CMA-ES $\to$ TRF)**:
-  - *Stage 1 — Global Ravine Exploration (CMA-ES)*: Navigates non-linear, ill-conditioned sensor error valleys via Covariance Matrix Adaptation ($\lambda = 12$ candidates/generation for $N=18$), optimizing a dimensionless Bayesian MAP objective ($u = p / \sigma_{\text{ISCWSA}}$).
+- **Two-Stage Hybrid MSA Engine (LRA-CMA $\to$ TRF)**:
+  - *Stage 1 — Global Adaptive Search (LRA-CMA)*: Explores non-linear, ill-conditioned sensor error ravines via Covariance Matrix Adaptation enhanced with **Learning Rate Adaptation (LRA)** and **Active Covariance Updates (aCMA)**. Dynamically tracks objective Signal-to-Noise Ratio (SNR) to preserve exploratory variance and escape deceptive saddle points under restricted toolface coverage ($\lambda = 12$ candidates/generation for $N=18$), optimizing a dimensionless Bayesian MAP objective ($u = p / \sigma_{\text{ISCWSA}}$).
   - *Stage 2 — Quadratic Refinement (TRF)*: Refines parameters along the ravine floor using Trust Region Reflective optimization ($\nabla f \approx 0$) bounded by physical hardware limits ($MB_z \le \pm 5000\text{ nT}$).
 - **Posterior Parameter Covariance**: Extracts parameter uncertainties directly from the converged Jacobian:
   $$\text{Cov}(p) \approx (J^T J)^{-1}$$
@@ -141,7 +141,7 @@ Modern directional drilling demands millimeter-grade mathematical rigor, millise
 - 📍 **Wellhead & Geodetic Datum**: Wellbore identification, geodetic WGS-84 coordinates, reference elevation datums (RKB, Ground Level, air gap), and target geological formation.
 - 🧭 **Geomagnetic Framework**: Selection between **WMM2025**, **IGRF-14**, and **HDGM**; includes one-click **"Auto WMM from Coords"** calculating total field intensity, dip angle, declination, and meridian convergence using backend spherical harmonics.
 - 🏗 **BHA & Drillstring Mechanics**: Pre-configured collar libraries (`6-3/4"`, `4-3/4" Slim`, `8" Heavy`), custom OD/ID sizing, stabilizer spacing, bit-to-sensor geometry, fluid mud weight, and real-time deflection previews.
-- ⚡ **MSA Optimization Parameters**: Controls for CMA-ES generation budgets, sensor misalignment flags ($M_{xy}, M_{xz}, M_{yz}$), and reference field deltas ($\Delta G, \Delta B, \Delta Dip$).
+- ⚡ **MSA Optimization Parameters**: Controls for **LRA-CMA** generation budgets (recommended 80–120 generations for full SNR adaptation), sensor misalignment flags ($M_{xy}, M_{xz}, M_{yz}$), and reference field deltas ($\Delta G, \Delta B, \Delta Dip$).
 
 ---
 
@@ -151,25 +151,25 @@ Empirically measured with `pytest-benchmark 5.3` on Linux x86_64 (Python 3.11):
 
 | Computational Module | Test Workload / Dataset Size | Mean Latency | Throughput (OPS) | Technical Specification |
 | :--- | :--- | :--- | :--- | :--- |
-| **MCM Trajectory Engine** | 100 stations | **~57.7 μs** | **17,328 ops/s** | Vectorized Sawaryn-Thorogood $\mathcal{O}(N)$ |
-| **MCM Trajectory Engine** | 1,000 stations | **~185.8 μs** | **5,383 ops/s** | Zero-latency 120 FPS WebGL render loop |
-| **MCM Trajectory Engine** | 10,000 stations | **~1.45 ms** | **692 ops/s** | Ultra-deep extended reach drilling (ERD) |
-| **BHA Gravity Sag Solver** | Euler-Bernoulli beam ODE | **~380.9 μs** | **2,625 ops/s** | Contact boundary clearance formulation |
-| **Continuous Inc Fusion** | 2,000 streaming CI records | **~10.36 ms** | **96.6 ops/s** | 95.4% mesh decimation (TVD error $\le 5\text{ cm}$) |
-| **ISCWSA 3D Uncertainty** | 500 stations (3D EOU) | **~119.2 ms** | **8.4 ops/s** | Complete $\Sigma_{\text{NEV}}$ covariance & eigen-analysis |
-| **Geomag WMM2025 Harmonics**| 500 3D spatial points | **~202.7 ms** | **4.9 ops/s** | Degree 12 Schmidt-normalized Legendre |
-| **MSA Hybrid Optimization**| 6-station D&I survey run | **~43.2 ms** | **23.1 ops/s** | CMA-ES (60 gen) + TRF quadratic polish |
+| **MCM Trajectory Engine** | 100 stations | **~63.1 μs** | **15,846 ops/s** | Vectorized Sawaryn-Thorogood $\mathcal{O}(N)$ |
+| **MCM Trajectory Engine** | 1,000 stations | **~219.3 μs** | **4,560 ops/s** | Zero-latency 120 FPS WebGL render loop |
+| **MCM Trajectory Engine** | 10,000 stations | **~1.83 ms** | **546 ops/s** | Ultra-deep extended reach drilling (ERD) |
+| **BHA Gravity Sag Solver** | Euler-Bernoulli beam ODE | **~596.2 μs** | **1,677 ops/s** | Contact boundary clearance formulation |
+| **Continuous Inc Fusion** | 2,000 streaming CI records | **~12.15 ms** | **82.3 ops/s** | 95.4% mesh decimation (TVD error $\le 5\text{ cm}$) |
+| **ISCWSA 3D Uncertainty** | 500 stations (3D EOU) | **~140.3 ms** | **7.1 ops/s** | Complete $\Sigma_{\text{NEV}}$ covariance & eigen-analysis |
+| **Geomag WMM2025 Harmonics**| 500 3D spatial points | **~294.9 ms** | **3.4 ops/s** | Degree 12 Schmidt-normalized Legendre |
+| **MSA Hybrid Optimization**| 6-station D&I survey run | **~305.8 ms** | **3.3 ops/s** | LRA-CMA (100 gen, SNR adapt) + TRF quadratic polish |
 
 ---
 
 ## 🔬 Computational Core: `arrowell_engine`
 
-ArroWell relies on a clean-room, zero-dependency directional drilling compute kernel (**[`arrowell_engine`](arrowell_engine/)**) written in pure NumPy and SciPy:
+ArroWell relies on a dedicated, high-performance directional drilling compute kernel (**[`arrowell_engine`](arrowell_engine/)**) written in pure NumPy and SciPy:
 
 ```text
 arrowell_engine/
 ├── geomag/            # Spherical harmonic evaluators (WMM/IGRF), coefficient binary compilers
-├── msa/               # Hybrid CMA-ES + TRF solver, Bayesian MAP regularization, toolface dispersion
+├── msa/               # Hybrid LRA-CMA + TRF solver, SNR learning rate adaptation, Bayesian MAP regularization
 ├── sag/               # Euler-Bernoulli structural beam mechanics with bilateral borehole contact
 ├── sensors/           # 15-parameter D&I calibration model, triaxial transforms, vertical locks
 ├── trajectory/
