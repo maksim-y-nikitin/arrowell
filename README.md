@@ -13,7 +13,7 @@
 [![Tailwind CSS v4](https://img.shields.io/badge/Tailwind_CSS-v4.0-06B6D4?style=flat&logo=tailwindcss&logoColor=white)](https://tailwindcss.com/)
 [![Pytest Suite](https://img.shields.io/badge/Tests-32%20Passed%20(100%25)-brightgreen?style=flat&logo=pytest&logoColor=white)](https://docs.pytest.org/)
 [![Benchmarks](https://img.shields.io/badge/Benchmarks-8%20Verified-purple?style=flat&logo=speedtest&logoColor=white)](#-performance-benchmarks)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 [![LinkedIn](https://img.shields.io/badge/LinkedIn-Connect-0A66C2?style=flat&logo=linkedin&logoColor=white)](https://www.linkedin.com/in/maksim-nikitin-1427ba203/)
 
 <p align="center">
@@ -31,6 +31,7 @@
   <a href="#-architecture--data-flow">Architecture</a> •
   <a href="#-quick-start">Quick Start</a> •
   <a href="#-data-exchange-formats">I/O Specs</a> •
+  <a href="#-license">License</a> •
   <a href="#-author">Author</a>
 </p>
 
@@ -177,3 +178,10 @@ arrowell_engine/
 │   ├── continuous.py  # High-Definition Continuous Inclination fusion & TVD-bounded decimation
 │   └── uncertainty.py # ISCWSA error propagation, 3D EOU eigensystem, and Separation Factor (SF)
 └── coords.py          # WGS-84 ellipsoidal transformations and UTM meridian grid convergence
+```
+
+---
+
+## 📄 License
+
+Distributed under the terms of the **GNU Affero General Public License v3 (AGPLv3)**. See [LICENSE](LICENSE) for the complete license text.
